@@ -8,5 +8,5 @@
 ###      ├── ConnectionManager.java // (Optional) Class for managing active connections
 ###     └── Token.java             // (Optional) Class for the single-use token mechanism
 
-###ClientConfig.java (Stores client settings, similar to how ServerConfig stores server settings).
-###ClientMain.java (The entry point where the client logic is launched).
+### ClientConfig.java (Stores client settings, similar to how ServerConfig stores server settings).
+### ClientMain.java (The entry point where the client logic is launched).
