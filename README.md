@@ -10,3 +10,6 @@
 
 ### ClientConfig.java (Stores client settings, similar to how ServerConfig stores server settings).
 ### ClientMain.java (The entry point where the client logic is launched).
+### to compile them: (javac ClientConfig.java ClientMain.java
+### java ClientMain --serverHost=localhost --serverPort=12345 --file=file1 --DC=2)
+
