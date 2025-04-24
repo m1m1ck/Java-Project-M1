@@ -10,7 +10,7 @@ import java.util.logging.Logger;
  * Manages active client connections for tracking and potential forced closure
  * (simulating failures).
  */
-public class ConnectionManager {
+    public class ConnectionManager {
     private static final Logger logger = Logger.getLogger(ConnectionManager.class.getName());
     private final List<Socket> activeConnections = new ArrayList<>();
     private final Random random = new Random();

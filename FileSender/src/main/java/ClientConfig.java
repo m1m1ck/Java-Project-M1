@@ -1,16 +1,15 @@
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
  * Stores the client's parameters (e.g., server host, server port, file ID, D_c, etc.).
  */
-public class ClientConfig {
+public class ClientConfig extends BaseConfig {
     private String serverHost = "localhost";
     private int serverPort = 12345;
-    private String fileId = "file1";
-    private int dC = 1; // Number of parallel connections
-    // Add more if needed, e.g., Pc, etc.
-
+    private String fileId = "random";
+    private int dC = 1;
     public String getServerHost() {
         return serverHost;
     }
@@ -34,6 +33,9 @@ public class ClientConfig {
         ClientConfig config = new ClientConfig();
         Map<String, String> argMap = parseArgs(args);
 
+        if (argMap.containsKey("port")) {
+            config.port = Integer.parseInt(argMap.get("port"));
+        }
         if (argMap.containsKey("serverHost")) {
             config.serverHost = argMap.get("serverHost");
         }
@@ -46,29 +48,21 @@ public class ClientConfig {
         if (argMap.containsKey("DC")) {
             config.dC = Integer.parseInt(argMap.get("DC"));
         }
-        return config;
-    }
 
-    private static Map<String, String> parseArgs(String[] args) {
-        Map<String, String> map = new HashMap<>();
-        for (String arg : args) {
-            if (arg.startsWith("--")) {
-                String[] parts = arg.substring(2).split("=", 2);
-                if (parts.length == 2) {
-                    map.put(parts[0], parts[1]);
-                }
-            }
-        }
-        return map;
+        config.filesDirectory = Paths.get("src", "main", "resources", "Client" + config.serverPort).toString();
+
+        return config;
     }
 
     @Override
     public String toString() {
         return "ClientConfig{" +
-                "serverHost='" + serverHost + '\'' +
+                "port=" + port +
+                ", serverHost='" + serverHost + '\'' +
                 ", serverPort=" + serverPort +
                 ", fileId='" + fileId + '\'' +
                 ", dC=" + dC +
+                ", directory" + filesDirectory +
                 '}';
     }
 }

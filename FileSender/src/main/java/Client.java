@@ -10,8 +10,8 @@ import java.util.logging.Logger;
  * 2) Connects to the server, requests file info, downloads in blocks (in a simplified version).
  * 3) (Optionally) uses multiple threads to download blocks in parallel.
  */
-public class ClientMain {
-    private static final Logger logger = Logger.getLogger(ClientMain.class.getName());
+public class Client {
+    private static final Logger logger = Logger.getLogger(Client.class.getName());
 
     public static void main(String[] args) {
         // 1. Parse client parameters

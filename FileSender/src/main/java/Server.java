@@ -11,8 +11,8 @@ import java.util.logging.Logger;
  * Entry point for launching the server. This class configures the server,
  * initializes components, and listens for incoming client connections.
  */
-public class ServerMain {
-    private static final Logger logger = Logger.getLogger(ServerMain.class.getName());
+public class Server {
+    private static final Logger logger = Logger.getLogger(Server.class.getName());
 
     public static void main(String[] args) {
         // 1. Parse command-line arguments into a ServerConfig object
