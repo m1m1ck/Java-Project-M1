@@ -1,10 +1,9 @@
-//package com.example.distributeddownload;
-
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 /**
@@ -23,13 +22,9 @@ public class Server {
 
         // 3. Create FileStorage to manage available files (MD5, etc.)
         FileStorage fileStorage = new FileStorage(config.getFilesDirectory());
-        fileStorage.init(); // Currently a stub method
 
         // 4. Create a fixed thread pool with a maximum of Cs threads
         ExecutorService executor = Executors.newFixedThreadPool(config.getCs());
-
-        // (Optional) Create a ConnectionManager instance if needed
-        // ConnectionManager connectionManager = new ConnectionManager();
 
         // 5. Start the ServerSocket and begin listening on the specified port
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
@@ -40,8 +35,19 @@ public class Server {
                 Socket clientSocket = serverSocket.accept();
                 logger.info("New client connected: " + clientSocket.getRemoteSocketAddress());
 
+                Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
+                    if (!clientSocket.isClosed() && Math.random() < config.getP()) {
+                        try {
+                            logger.warning("Closing connection to client (simulated failure): " + clientSocket.getRemoteSocketAddress());
+                            clientSocket.close();
+                        } catch (IOException e) {
+                            logger.severe("Error while closing socket: " + e.getMessage());
+                        }
+                    }
+                }, config.getT(), config.getT(), TimeUnit.SECONDS);
+
                 // Create a RequestHandler and submit it to the thread pool
-                RequestHandler handler = new RequestHandler(clientSocket, fileStorage /*, connectionManager */);
+                RequestHandler handler = new RequestHandler(clientSocket, fileStorage);
                 executor.execute(handler);
             }
         } catch (IOException e) {

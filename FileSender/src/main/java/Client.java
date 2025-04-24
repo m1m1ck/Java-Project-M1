@@ -18,6 +18,8 @@ public class Client {
         ClientConfig config = ClientConfig.fromArgs(args);
         logger.info("Client starting with parameters: " + config);
 
+        FileStorage fileStorage = new FileStorage(config.getFilesDirectory());
+
         // 2. As a simple test, let's connect to the server and try "LIST_FILES"
         //    or download the file specified by config.getFileId().
         try {

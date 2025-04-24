@@ -1,5 +1,4 @@
 import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -49,7 +48,7 @@ public class ClientConfig extends BaseConfig {
             config.dC = Integer.parseInt(argMap.get("DC"));
         }
 
-        config.filesDirectory = Paths.get("src", "main", "resources", "Client" + config.serverPort).toString();
+        config.filesDirectory = Paths.get("src", "main", "resources", "Client" + config.hashCode()).toString();
 
         return config;
     }

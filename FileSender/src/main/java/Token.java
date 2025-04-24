@@ -1,5 +1,3 @@
-//package com.example.distributeddownload;
-
 import java.util.UUID;
 
 /**

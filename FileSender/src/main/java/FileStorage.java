@@ -1,6 +1,11 @@
-//package com.example.distributeddownload;
-
 import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.logging.Logger;
 
 /**
@@ -13,46 +18,95 @@ public class FileStorage {
 
     /**
      * @param baseDirectory the directory path where files are located
+     * Initializes the FileStorage by scanning the directory
      */
     public FileStorage(String baseDirectory) {
         this.baseDirectory = baseDirectory;
-    }
-
-    /**
-     * Initializes the FileStorage by scanning the directory and (optionally)
-     * calculating MD5 checksums for each file.
-     */
-    public void init() {
         logger.info("Initializing FileStorage for directory: " + baseDirectory);
         File dir = new File(baseDirectory);
         if (!dir.exists() || !dir.isDirectory()) {
-            logger.warning("Directory does not exist or is not a directory: " + baseDirectory);
-            // Throw an exception or handle the error as needed
+            try{
+                Files.createDirectories(dir.toPath());
+            } catch (IOException e) {
+                logger.warning("Directory does not exist and cannot be created: " + baseDirectory);
+                throw new RuntimeException(e);
+            }
         }
-        // Here you can scan files, compute MD5, and store the data in a map
-        // For now, this is a stub
     }
 
     /**
      * Returns a list of available file IDs.
-     * Stub method returning a fixed array.
+     * The result of the sha-256 algorithm is used as an identifier.
      */
-    public String[] listFileIds() {
-        // Return a sample list (stub).
-        return new String[]{"file1", "file2"};
+    public List<ServerFile> getFiles() {
+        List<ServerFile> fileHashes = new ArrayList<>();
+        File folder = new File(baseDirectory);
+        File[] files = folder.listFiles();
+
+        if (files != null) {
+            for (File file : files) {
+                if (file.isFile()) {
+                    try {
+                        String shaHash = generateHash(file, "SHA-256");
+                        String md5Hash = generateHash(file, "MD5");
+                        fileHashes.add(new ServerFile(file.getName(), shaHash, md5Hash));
+                    } catch (IOException | NoSuchAlgorithmException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+        return fileHashes;
+    }
+
+
+    private String generateHash(File file, String algorithm)  throws IOException, NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance(algorithm);
+
+        byte[] fileBytes = Files.readAllBytes(file.toPath());
+
+        byte[] hashBytes = digest.digest(fileBytes);
+
+        StringBuilder hexString = new StringBuilder();
+        for (byte b : hashBytes) {
+            hexString.append(String.format("%02x", b));
+        }
+
+        return hexString.toString();
     }
 
     /**
-     * Returns the MD5 checksum of the specified file (stub).
-     *
+     * Returns the MD5 checksum of the specified file.
      * @param fileId identifier of the file
-     * @return MD5 string or "dummyMD5" as a default
      */
-    public String getMD5(String fileId) {
-        // Stub
-        return "dummyMD5";
+    public String getMD5(String filename) throws IOException, NoSuchAlgorithmException {
+        File file = new File(baseDirectory + "/" + filename);
+        return generateHash(file, "MD5");
     }
 
-    // Add further methods for reading file blocks, retrieving file size, etc.
-    // e.g.: public byte[] readBlock(String fileId, int blockIndex, int blockSize) { ... }
+    public byte[] getBlock(String filename, int blockIndex, int blockSize) throws IOException {
+        File file = new File(baseDirectory + "/" + filename);
+
+        if (!file.exists()) {
+            throw new IOException("File does not exist: " + file.getAbsolutePath());
+        }
+
+        try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+            long fileLength = raf.length();
+            long totalBlocks = (fileLength + blockSize - 1) / blockSize;
+
+            if (blockIndex < 0 || blockIndex >= totalBlocks) {
+                return new byte[0];
+            }
+
+            long position = (long) blockIndex * blockSize;
+            int actualBlockSize = (int) Math.min(blockSize, fileLength - position);
+
+            byte[] block = new byte[actualBlockSize];
+            raf.seek(position);
+            raf.readFully(block);
+
+            return block;
+        }
+    }
 }
