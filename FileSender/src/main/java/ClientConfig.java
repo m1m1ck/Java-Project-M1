@@ -47,6 +47,9 @@ public class ClientConfig extends BaseConfig {
         if (argMap.containsKey("DC")) {
             config.dC = Integer.parseInt(argMap.get("DC"));
         }
+        if (argMap.containsKey("B")) {
+            config.dC = Integer.parseInt(argMap.get("B"));
+        }
 
         config.filesDirectory = Paths.get("src", "main", "resources", "Client" + config.hashCode()).toString();
 
@@ -57,11 +60,12 @@ public class ClientConfig extends BaseConfig {
     public String toString() {
         return "ClientConfig{" +
                 "port=" + port +
-                ", serverHost='" + serverHost + '\'' +
+                ", serverHost='" + serverHost +
                 ", serverPort=" + serverPort +
-                ", fileId='" + fileId + '\'' +
+                ", fileId='" + fileId +
                 ", dC=" + dC +
-                ", directory" + filesDirectory +
+                ", directory=" + filesDirectory + '\'' +
+                ", b=" + b +
                 '}';
     }
 }

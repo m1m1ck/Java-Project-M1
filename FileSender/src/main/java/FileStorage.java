@@ -15,13 +15,15 @@ import java.util.logging.Logger;
 public class FileStorage {
     private static final Logger logger = Logger.getLogger(FileStorage.class.getName());
     private final String baseDirectory;
+    private final int blockSize;
 
     /**
      * @param baseDirectory the directory path where files are located
      * Initializes the FileStorage by scanning the directory
      */
-    public FileStorage(String baseDirectory) {
+    public FileStorage(String baseDirectory, int blockSize) {
         this.baseDirectory = baseDirectory;
+        this.blockSize = blockSize;
         logger.info("Initializing FileStorage for directory: " + baseDirectory);
         File dir = new File(baseDirectory);
         if (!dir.exists() || !dir.isDirectory()) {
@@ -84,7 +86,7 @@ public class FileStorage {
         return generateHash(file, "MD5");
     }
 
-    public byte[] getBlock(String filename, int blockIndex, int blockSize) throws IOException {
+    public byte[] getBlock(String filename, int blockIndex) throws IOException {
         File file = new File(baseDirectory + "/" + filename);
 
         if (!file.exists()) {

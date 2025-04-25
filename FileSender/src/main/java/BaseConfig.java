@@ -8,8 +8,10 @@ public abstract class BaseConfig {
 
     protected int port;
     protected String filesDirectory;
+    protected int b = 100;
 
     public int getPort() { return port; }
+    public int getB() { return b; }
     public String getFilesDirectory() { return filesDirectory; }
 
     /**
