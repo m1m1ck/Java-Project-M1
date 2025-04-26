@@ -16,9 +16,9 @@ public class RequestHandler implements Runnable {
     private final FileStorage fileStorage;
     private final List<ServerFile> files;
     private final Map<String, List<TrustedClient>> trustedClients;
-    private BufferedReader reader;
-    private PrintWriter writer;
-    private String command;
+    private final BufferedReader reader;
+    private final PrintWriter writer;
+    private final String command;
     private boolean closed;
 
     // Default constructor for normal handling (opens own streams)
@@ -45,19 +45,19 @@ public class RequestHandler implements Runnable {
 
     @Override
     public void run() {
-        try {
-            // If streams are not pre-opened, open them
+        try (OutputStream out = socket.getOutputStream();
+             DataOutputStream dataOut = new DataOutputStream(out)) {
+
             if (command == null) {
                 try (InputStream in = socket.getInputStream();
-                     OutputStream out = socket.getOutputStream()) {
-                    BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(in));
-                    PrintWriter bufferedWriter = new PrintWriter(out, true);
+                     BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(in));
+                     PrintWriter bufferedWriter = new PrintWriter(out, true)) {
 
-                    handleCommands(bufferedReader, bufferedWriter, out);
+                    handleCommands(bufferedReader, bufferedWriter, dataOut);
                 }
             } else {
-                handleOneCommand(command, writer, socket.getOutputStream());
-                handleCommands(reader, writer, socket.getOutputStream());
+                handleOneCommand(command, writer, dataOut);
+                handleCommands(reader, writer, dataOut);
             }
         } catch (IOException e) {
             logger.warning("I/O error with client " + socket.getRemoteSocketAddress() +
@@ -70,68 +70,62 @@ public class RequestHandler implements Runnable {
             } catch (IOException e) {
                 logger.warning("Error closing socket: " + e.getMessage());
             }
-            logger.info("Connection closed: " + (socket != null ? socket.getRemoteSocketAddress() : "N/A"));
+            logger.info("Connection closed: " +  socket.getRemoteSocketAddress());
         }
     }
 
-    private void handleCommands(BufferedReader reader, PrintWriter writer, OutputStream out) throws IOException {
+    private void handleCommands(BufferedReader reader, PrintWriter writer, DataOutputStream dataOut) throws IOException {
         String line;
         while ((line = reader.readLine()) != null && !closed) {
             logger.info("Received command: " + line);
-            handleOneCommand(line, writer, out);
+            handleOneCommand(line, writer, dataOut);
         }
     }
 
-    private void handleOneCommand(String line, PrintWriter writer, OutputStream out) throws IOException {
+    private void handleOneCommand(String line, PrintWriter writer, DataOutputStream dataOut) throws IOException {
         String[] parts = line.trim().split("\\s+");
         String command = parts[0].toUpperCase();
 
         switch (command) {
-            case "LIST_FILES":
+            case "LIST_FILES" -> {
                 for (ServerFile f : files) {
                     writer.println("Name: " + f.fileName() + ", ID: " + f.sha256());
                 }
                 writer.println("END_OF_LIST");
-                break;
-
-            case "ONLY_DOWNLOAD":
-            case "DOWNLOAD":
+            }
+            case "DOWNLOAD" -> {
                 if (parts.length < 3) {
                     writer.println("ERROR: Missing file ID or block number for DOWNLOAD");
                     break;
                 }
-
                 String fileId = parts[1];
                 int blockInd = Integer.parseInt(parts[2]);
-
                 Optional<ServerFile> fileD = files.stream()
                         .filter(f -> f.sha256().equals(fileId))
                         .findAny();
-
                 if (fileD.isPresent()) {
+                    writer.println("SENDING");
                     byte[] blockData = fileStorage.getBlock(fileD.get().fileName(), blockInd);
-                    out.write(blockData);
-                    out.flush();
+
+                    dataOut.writeInt(blockData.length);
+                    dataOut.write(blockData);
+                    dataOut.flush();
                 } else {
                     writer.println("ERROR: Missing file for DOWNLOAD with ID: " + parts[1]);
                 }
-                break;
-
-            case "MD5":
+            }
+            case "MD5" -> {
                 if (parts.length < 3) {
                     writer.println("ERROR: Missing file ID or hash for MD5");
                     break;
                 }
-
-                String file2Id = parts[1];
-                String file2Hash = parts[2];
-
+                String fileId = parts[1];
+                String fileHash = parts[2];
                 Optional<ServerFile> fileMD = files.stream()
-                        .filter(f -> f.sha256().equals(file2Id))
+                        .filter(f -> f.sha256().equals(fileId))
                         .findAny();
-
                 if (fileMD.isPresent()) {
-                    if (fileMD.get().md5().equals(file2Hash)) {
+                    if (fileMD.get().md5().equals(fileHash)) {
                         writer.println("CORRECT");
 
                         String clientHost = socket.getInetAddress().getHostAddress();
@@ -144,16 +138,12 @@ public class RequestHandler implements Runnable {
                 } else {
                     writer.println("ERROR: Missing file for MD5 with ID: " + parts[1]);
                 }
-                break;
-
-            case "CLOSE_CONNECTION":
+            }
+            case "CLOSE_CONNECTION" -> {
                 writer.println("Connection closing...");
                 closed = true;
-                return;
-
-            default:
-                writer.println("UNKNOWN_COMMAND");
-                break;
+            }
+            default -> writer.println("UNKNOWN_COMMAND");
         }
     }
 }

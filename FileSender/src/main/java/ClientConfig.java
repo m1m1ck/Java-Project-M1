@@ -48,7 +48,7 @@ public class ClientConfig extends BaseConfig {
             config.dC = Integer.parseInt(argMap.get("DC"));
         }
         if (argMap.containsKey("B")) {
-            config.dC = Integer.parseInt(argMap.get("B"));
+            config.b = Integer.parseInt(argMap.get("B"));
         }
 
         config.filesDirectory = Paths.get("src", "main", "resources", "Client" + config.hashCode()).toString();

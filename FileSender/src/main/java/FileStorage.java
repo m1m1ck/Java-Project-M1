@@ -1,4 +1,5 @@
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
@@ -79,7 +80,7 @@ public class FileStorage {
 
     /**
      * Returns the MD5 checksum of the specified file.
-     * @param fileId identifier of the file
+     * identifier of the file
      */
     public String getMD5(String filename) throws IOException, NoSuchAlgorithmException {
         File file = new File(baseDirectory + "/" + filename);
@@ -109,6 +110,19 @@ public class FileStorage {
             raf.readFully(block);
 
             return block;
+        }
+    }
+
+    public void saveFile(byte[] fileData, String fileName) {
+        File dir = new File(baseDirectory);
+
+        File outputFile = new File(dir, fileName);
+
+        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+            fos.write(fileData);
+            logger.info("File downloaded: " + outputFile.getAbsolutePath());
+        } catch (IOException e) {
+            logger.info("Error on saving file : " + e.getMessage());
         }
     }
 }

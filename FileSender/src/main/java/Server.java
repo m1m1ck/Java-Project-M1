@@ -2,9 +2,9 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
@@ -28,6 +28,7 @@ public class Server {
         FileStorage fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
         files = fileStorage.getFiles();
 
+        trustedClients = new HashMap<>();
         for (ServerFile file : files) {
             trustedClients.put(file.sha256(), new ArrayList<>());
         }
@@ -46,7 +47,7 @@ public class Server {
 
                 // Create a RequestHandler and submit it to the thread pool
                 if (((ThreadPoolExecutor) executor).getActiveCount() < config.getCs()) {
-                    startDisconnectionSimulator(clientSocket, config.getP(), config.getT(), logger);
+                    startDisconnectionSimulator(clientSocket, config.getP(), config.getT());
 
                     RequestHandler handler = new RequestHandler(clientSocket, fileStorage, files, trustedClients);
                     executor.execute(handler);
@@ -61,7 +62,7 @@ public class Server {
         }
     }
 
-    private static void startDisconnectionSimulator(Socket socket, double probability, int intervalSeconds, Logger logger) {
+    private static void startDisconnectionSimulator(Socket socket, double probability, int intervalSeconds) {
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
         Runnable task = () -> {
@@ -72,10 +73,10 @@ public class Server {
 
             if (Math.random() < probability) {
                 try {
-                    logger.warning("Closing connection to client (simulated failure): " + socket.getRemoteSocketAddress());
+                    Server.logger.warning("Closing connection to client (simulated failure): " + socket.getRemoteSocketAddress());
                     socket.close();
                 } catch (IOException e) {
-                    logger.severe("Error while closing socket: " + e.getMessage());
+                    Server.logger.severe("Error while closing socket: " + e.getMessage());
                 } finally {
                     scheduler.shutdown();
                 }
@@ -93,17 +94,17 @@ public class Server {
 
             String line = reader.readLine();
 
-            if (!TryFindTrustedClient(line, executor, clientSocket, fileStorage, writer)) {
+            if (!TryFindTrustedClient(line, writer)) {
                 executor.execute(new RequestHandler(clientSocket, reader, writer, line,  fileStorage, files, trustedClients));
             }
 
         } catch (IOException e) {
-            logger.severe("Error handling ONLY_DOWNLOAD fallback: " + e.getMessage());
+            logger.severe("Error handling DOWNLOAD fallback: " + e.getMessage());
         }
     }
 
-    private static boolean TryFindTrustedClient(String line, ExecutorService executor, Socket clientSocket, FileStorage fileStorage, PrintWriter writer) {
-        if (line == null || !line.trim().startsWith("ONLY_DOWNLOAD")) {
+    private static boolean TryFindTrustedClient(String line, PrintWriter writer) {
+        if (line == null || !line.trim().startsWith("DOWNLOAD")) {
             return false;
         }
 
@@ -132,6 +133,7 @@ public class Server {
                     break;
                 }
             } catch (IOException e) {
+                throw new RuntimeException(e);
             }
         }
 
