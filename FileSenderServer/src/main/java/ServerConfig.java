@@ -1,25 +1,18 @@
-//package com.example.distributeddownload;
-
-import java.util.HashMap;
 import java.util.Map;
 
 /**
  * Holds server configuration parameters such as port, Cs, T, P,
  * and the directory containing files for the server.
  */
-public class ServerConfig {
-    private int port = 12345;
+public class ServerConfig extends BaseConfig {
     private int Cs = 5;           // Maximum number of parallel connections
     private double P = 0.2;       // Probability of connection closure
     private int T = 10;           // Frequency (in seconds) to attempt closure
-    private String filesDirectory = "."; // Directory where server files are stored
 
     // Getters
-    public int getPort() { return port; }
     public int getCs() { return Cs; }
     public double getP() { return P; }
     public int getT() { return T; }
-    public String getFilesDirectory() { return filesDirectory; }
 
     /**
      * Parses command-line arguments in the form of --key=value
@@ -47,23 +40,12 @@ public class ServerConfig {
         if (argMap.containsKey("filesDir")) {
             config.filesDirectory = argMap.get("filesDir");
         }
-        return config;
-    }
-
-    /**
-     * A simple parser for arguments in the format --key=value
-     */
-    private static Map<String, String> parseArgs(String[] args) {
-        Map<String, String> map = new HashMap<>();
-        for (String arg : args) {
-            if (arg.startsWith("--")) {
-                String[] parts = arg.substring(2).split("=", 2);
-                if (parts.length == 2) {
-                    map.put(parts[0], parts[1]);
-                }
-            }
+        if (argMap.containsKey("B")) {
+            config.b = Integer.parseInt(argMap.get("B"));
         }
-        return map;
+        config.filesDirectory = config.getClass().getClassLoader().getResource("ServerResources/").getPath();
+
+        return config;
     }
 
     @Override
@@ -74,6 +56,7 @@ public class ServerConfig {
                 ", P=" + P +
                 ", T=" + T +
                 ", filesDirectory='" + filesDirectory + '\'' +
+                ", b=" + b +
                 '}';
     }
 }
