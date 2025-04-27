@@ -1,5 +1,6 @@
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Stores the client's parameters (e.g., server host, server port, file ID, D_c, etc.).
@@ -51,7 +52,7 @@ public class ClientConfig extends BaseConfig {
             config.b = Integer.parseInt(argMap.get("B"));
         }
 
-        config.filesDirectory = Paths.get("src", "main", "resources", "Client" + config.hashCode()).toString();
+        config.filesDirectory = Paths.get("src", "main", "resources", "Client_Port" + config.getPort()).toString();
 
         return config;
     }
@@ -60,12 +61,12 @@ public class ClientConfig extends BaseConfig {
     public String toString() {
         return "ClientConfig{" +
                 "port=" + port +
-                ", serverHost='" + serverHost +
+                ", serverHost=" + serverHost +
                 ", serverPort=" + serverPort +
-                ", fileId='" + fileId +
+                ", fileId=" + fileId +
                 ", dC=" + dC +
                 ", directory=" + filesDirectory + '\'' +
-                ", b=" + b +
+                ", B=" + b +
                 '}';
     }
 }

@@ -15,15 +15,16 @@ public class RequestHandler implements Runnable {
     private final Socket socket;
     private final FileStorage fileStorage;
     private final List<ServerFile> files;
+    private final List<Socket> activeSockets;
     private final Map<String, List<TrustedClient>> trustedClients;
     private final BufferedReader reader;
     private final PrintWriter writer;
     private final String command;
     private boolean closed;
 
-    // Default constructor for normal handling (opens own streams)
-    public RequestHandler(Socket socket, FileStorage fileStorage, List<ServerFile> files, Map<String, List<TrustedClient>> trustedClients) {
+    public RequestHandler(List<Socket> activeSockets, Socket socket, FileStorage fileStorage, List<ServerFile> files, Map<String, List<TrustedClient>> trustedClients) {
         this.socket = socket;
+        this.activeSockets = activeSockets;
         this.fileStorage = fileStorage;
         this.files = files;
         this.trustedClients = trustedClients;
@@ -32,9 +33,9 @@ public class RequestHandler implements Runnable {
         this.command = null;
     }
 
-    // Constructor for when streams are already opened
-    public RequestHandler(Socket socket, BufferedReader reader, PrintWriter writer, String command, FileStorage fileStorage, List<ServerFile> files, Map<String, List<TrustedClient>> trustedClients) {
+    public RequestHandler(List<Socket> activeSockets, Socket socket, BufferedReader reader, PrintWriter writer, String command, FileStorage fileStorage, List<ServerFile> files, Map<String, List<TrustedClient>> trustedClients) {
         this.socket = socket;
+        this.activeSockets = activeSockets;
         this.fileStorage = fileStorage;
         this.files = files;
         this.trustedClients = trustedClients;
@@ -60,24 +61,26 @@ public class RequestHandler implements Runnable {
                 handleCommands(reader, writer, dataOut);
             }
         } catch (IOException e) {
-            logger.warning("I/O error with client " + socket.getRemoteSocketAddress() +
-                    ": " + e.getMessage());
+            /*logger.warning("I/O error with client " + socket.getRemoteSocketAddress() +
+                    ": " + e.getMessage());*/
         } finally {
             try {
+                synchronized (activeSockets) {
+                    activeSockets.remove(socket);
+                }
                 if (!socket.isClosed()) {
                     socket.close();
                 }
             } catch (IOException e) {
                 logger.warning("Error closing socket: " + e.getMessage());
             }
-            logger.info("Connection closed: " +  socket.getRemoteSocketAddress());
+            //slogger.info("Connection closed: " + socket.getRemoteSocketAddress());
         }
     }
 
     private void handleCommands(BufferedReader reader, PrintWriter writer, DataOutputStream dataOut) throws IOException {
         String line;
         while ((line = reader.readLine()) != null && !closed) {
-            logger.info("Received command: " + line);
             handleOneCommand(line, writer, dataOut);
         }
     }
@@ -111,6 +114,7 @@ public class RequestHandler implements Runnable {
                     dataOut.write(blockData);
                     dataOut.flush();
                 } else {
+                    logger.warning("DOWNLOAD failed: file not found for ID " + parts[1]);
                     writer.println("ERROR: Missing file for DOWNLOAD with ID: " + parts[1]);
                 }
             }
@@ -132,10 +136,13 @@ public class RequestHandler implements Runnable {
                         int clientPort = socket.getPort();
                         trustedClients.get(fileMD.get().sha256())
                                 .add(new TrustedClient(clientHost, clientPort));
+                        logger.info("MD5 verified and client trusted: " + clientHost + ":" + clientPort);
                     } else {
+                        logger.warning("MD5 mismatch for file ID: " + fileId +  ". Expected: " + fileMD.get().md5() + ". Received: " + fileHash);
                         writer.println("WRONG");
                     }
                 } else {
+                    logger.warning("MD5 check failed: file not found for ID " + fileId);
                     writer.println("ERROR: Missing file for MD5 with ID: " + parts[1]);
                 }
             }
@@ -143,7 +150,10 @@ public class RequestHandler implements Runnable {
                 writer.println("Connection closing...");
                 closed = true;
             }
-            default -> writer.println("UNKNOWN_COMMAND");
+            default -> {
+                logger.warning("Unknown command received: " + command);
+                writer.println("UNKNOWN_COMMAND");
+            }
         }
     }
 }

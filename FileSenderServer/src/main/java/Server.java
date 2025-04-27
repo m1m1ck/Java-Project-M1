@@ -1,10 +1,7 @@
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
@@ -18,13 +15,10 @@ public class Server {
     private static List<ServerFile> files;
 
     public static void main(String[] args) {
-        // 1. Parse command-line arguments into a ServerConfig object
         ServerConfig config = ServerConfig.fromArgs(args);
 
-        // 2. Log server start and parameters
         logger.info("Server starting with parameters: " + config);
 
-        // 3. Create FileStorage to manage available files (MD5, etc.)
         FileStorage fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
         files = fileStorage.getFiles();
 
@@ -33,26 +27,26 @@ public class Server {
             trustedClients.put(file.sha256(), new ArrayList<>());
         }
 
-        // 4. Create a fixed thread pool with a maximum of Cs threads
         ExecutorService executor = Executors.newFixedThreadPool(config.getCs());
 
-        // 5. Start the ServerSocket and begin listening on the specified port
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
             logger.info("Server is listening on port: " + config.getPort());
 
-            // 6. Main loop to accept client connections
+            List<Socket> activeSockets = new ArrayList<>();
+            startDisconnectionSimulator(activeSockets, config.getP(), config.getT());
+
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 logger.info("New client connected: " + clientSocket.getRemoteSocketAddress());
 
-                // Create a RequestHandler and submit it to the thread pool
                 if (((ThreadPoolExecutor) executor).getActiveCount() < config.getCs()) {
-                    startDisconnectionSimulator(clientSocket, config.getP(), config.getT());
-
-                    RequestHandler handler = new RequestHandler(clientSocket, fileStorage, files, trustedClients);
+                    synchronized (activeSockets) {
+                        activeSockets.add(clientSocket);
+                    }
+                    RequestHandler handler = new RequestHandler(activeSockets, clientSocket, fileStorage, files, trustedClients);
                     executor.execute(handler);
                 } else {
-                    SearchPeer(executor, clientSocket, fileStorage);
+                    SearchPeer(activeSockets, executor, clientSocket, fileStorage);
                 }
             }
         } catch (IOException e) {
@@ -62,19 +56,21 @@ public class Server {
         }
     }
 
-    private static void startDisconnectionSimulator(Socket socket, double probability, int intervalSeconds) {
+    private static void startDisconnectionSimulator(List<Socket> activeSockets, double probability, int intervalSeconds) {
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
+        Random rand = new Random();
         Runnable task = () -> {
-            if (socket.isClosed()) {
-                scheduler.shutdown();
-                return;
-            }
-
             if (Math.random() < probability) {
                 try {
-                    Server.logger.warning("Closing connection to client (simulated failure): " + socket.getRemoteSocketAddress());
-                    socket.close();
+                    synchronized (activeSockets) {
+                        Socket socket = activeSockets.get(rand.nextInt(activeSockets.size()));
+                        if (!socket.isClosed())
+                        {
+                            Server.logger.warning("Closing connection to client (simulated failure): " + socket.getRemoteSocketAddress());
+                            socket.close();
+                        }
+                    }
                 } catch (IOException e) {
                     Server.logger.severe("Error while closing socket: " + e.getMessage());
                 } finally {
@@ -86,7 +82,7 @@ public class Server {
         scheduler.scheduleAtFixedRate(task, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
     }
 
-    private static void SearchPeer(ExecutorService executor, Socket clientSocket, FileStorage fileStorage) {
+    private static void SearchPeer(List<Socket> activeSockets, ExecutorService executor, Socket clientSocket, FileStorage fileStorage) {
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
              OutputStream out = clientSocket.getOutputStream();
@@ -95,7 +91,7 @@ public class Server {
             String line = reader.readLine();
 
             if (!TryFindTrustedClient(line, writer)) {
-                executor.execute(new RequestHandler(clientSocket, reader, writer, line,  fileStorage, files, trustedClients));
+                executor.execute(new RequestHandler(activeSockets, clientSocket, reader, writer, line,  fileStorage, files, trustedClients));
             }
 
         } catch (IOException e) {

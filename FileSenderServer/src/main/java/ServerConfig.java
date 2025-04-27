@@ -40,7 +40,9 @@ public class ServerConfig extends BaseConfig {
         if (argMap.containsKey("filesDir")) {
             config.filesDirectory = argMap.get("filesDir");
         }
-
+        if (argMap.containsKey("B")) {
+            config.b = Integer.parseInt(argMap.get("B"));
+        }
         config.filesDirectory = config.getClass().getClassLoader().getResource("ServerResources/").getPath();
 
         return config;
@@ -54,7 +56,7 @@ public class ServerConfig extends BaseConfig {
                 ", P=" + P +
                 ", T=" + T +
                 ", filesDirectory='" + filesDirectory + '\'' +
-                ", b='" + b +
+                ", b=" + b +
                 '}';
     }
 }
