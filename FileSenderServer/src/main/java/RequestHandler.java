@@ -1,3 +1,4 @@
+// --- RequestHandler.java ---
 import java.io.*;
 import java.net.Socket;
 import java.util.List;
@@ -5,10 +6,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Logger;
 
-/**
- * Handles a single client connection. Read commands from the client,
- * processes them using FileStorage, and sends appropriate responses.
- */
 public class RequestHandler implements Runnable {
     private static final Logger logger = Logger.getLogger(RequestHandler.class.getName());
 
@@ -23,14 +20,7 @@ public class RequestHandler implements Runnable {
     private boolean closed;
 
     public RequestHandler(List<Socket> activeSockets, Socket socket, FileStorage fileStorage, List<ServerFile> files, Map<String, List<TrustedClient>> trustedClients) {
-        this.socket = socket;
-        this.activeSockets = activeSockets;
-        this.fileStorage = fileStorage;
-        this.files = files;
-        this.trustedClients = trustedClients;
-        this.reader = null;
-        this.writer = null;
-        this.command = null;
+        this(activeSockets, socket, null, null, null, fileStorage, files, trustedClients);
     }
 
     public RequestHandler(List<Socket> activeSockets, Socket socket, BufferedReader reader, PrintWriter writer, String command, FileStorage fileStorage, List<ServerFile> files, Map<String, List<TrustedClient>> trustedClients) {
@@ -53,7 +43,6 @@ public class RequestHandler implements Runnable {
                 try (InputStream in = socket.getInputStream();
                      BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(in));
                      PrintWriter bufferedWriter = new PrintWriter(out, true)) {
-
                     handleCommands(bufferedReader, bufferedWriter, dataOut);
                 }
             } else {
@@ -61,20 +50,10 @@ public class RequestHandler implements Runnable {
                 handleCommands(reader, writer, dataOut);
             }
         } catch (IOException e) {
-            /*logger.warning("I/O error with client " + socket.getRemoteSocketAddress() +
-                    ": " + e.getMessage());*/
+            // I/O error
         } finally {
-            try {
-                synchronized (activeSockets) {
-                    activeSockets.remove(socket);
-                }
-                if (!socket.isClosed()) {
-                    socket.close();
-                }
-            } catch (IOException e) {
-                logger.warning("Error closing socket: " + e.getMessage());
-            }
-            //slogger.info("Connection closed: " + socket.getRemoteSocketAddress());
+            synchronized (activeSockets) { activeSockets.remove(socket); }
+            try { if (!socket.isClosed()) socket.close(); } catch (IOException ignored) {}
         }
     }
 
@@ -87,9 +66,9 @@ public class RequestHandler implements Runnable {
 
     private void handleOneCommand(String line, PrintWriter writer, DataOutputStream dataOut) throws IOException {
         String[] parts = line.trim().split("\\s+");
-        String command = parts[0].toUpperCase();
+        String cmd = parts[0].toUpperCase();
 
-        switch (command) {
+        switch (cmd) {
             case "LIST_FILES" -> {
                 for (ServerFile f : files) {
                     writer.println("Name: " + f.fileName() + ", ID: " + f.sha256());
@@ -109,41 +88,31 @@ public class RequestHandler implements Runnable {
                 if (fileD.isPresent()) {
                     writer.println("SENDING");
                     byte[] blockData = fileStorage.getBlock(fileD.get().fileName(), blockInd);
-
                     dataOut.writeInt(blockData.length);
                     dataOut.write(blockData);
                     dataOut.flush();
                 } else {
-                    logger.warning("DOWNLOAD failed: file not found for ID " + parts[1]);
-                    writer.println("ERROR: Missing file for DOWNLOAD with ID: " + parts[1]);
+                    writer.println("ERROR: Missing file for DOWNLOAD with ID: " + fileId);
                 }
             }
             case "MD5" -> {
-                if (parts.length < 3) {
-                    writer.println("ERROR: Missing file ID or hash for MD5");
+                if (parts.length < 4) {
+                    writer.println("ERROR: Missing file ID or hash or port for MD5");
                     break;
                 }
-                String fileId = parts[1];
-                String fileHash = parts[2];
+                String fileId = parts[1], fileHash = parts[2];
+                int port = Integer.parseInt(parts[3]);
                 Optional<ServerFile> fileMD = files.stream()
                         .filter(f -> f.sha256().equals(fileId))
                         .findAny();
-                if (fileMD.isPresent()) {
-                    if (fileMD.get().md5().equals(fileHash)) {
-                        writer.println("CORRECT");
-
-                        String clientHost = socket.getInetAddress().getHostAddress();
-                        int clientPort = socket.getPort();
-                        trustedClients.get(fileMD.get().sha256())
-                                .add(new TrustedClient(clientHost, clientPort));
-                        logger.info("MD5 verified and client trusted: " + clientHost + ":" + clientPort);
-                    } else {
-                        logger.warning("MD5 mismatch for file ID: " + fileId +  ". Expected: " + fileMD.get().md5() + ". Received: " + fileHash);
-                        writer.println("WRONG");
-                    }
+                if (fileMD.isPresent() && fileMD.get().md5().equals(fileHash)) {
+                    writer.println("CORRECT");
+                    String clientHost = socket.getInetAddress().getHostAddress();
+                    trustedClients.get(fileMD.get().sha256())
+                            .add(new TrustedClient(clientHost, port));
+                    logger.info("Added trusted client: " + clientHost + " " + port);
                 } else {
-                    logger.warning("MD5 check failed: file not found for ID " + fileId);
-                    writer.println("ERROR: Missing file for MD5 with ID: " + parts[1]);
+                    writer.println("WRONG");
                 }
             }
             case "CLOSE_CONNECTION" -> {
@@ -151,7 +120,6 @@ public class RequestHandler implements Runnable {
                 closed = true;
             }
             default -> {
-                logger.warning("Unknown command received: " + command);
                 writer.println("UNKNOWN_COMMAND");
             }
         }

@@ -22,7 +22,7 @@ public class Server {
         FileStorage fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
         files = fileStorage.getFiles();
 
-        trustedClients = new HashMap<>();
+        trustedClients = new ConcurrentHashMap<>();
         for (ServerFile file : files) {
             trustedClients.put(file.sha256(), new ArrayList<>());
         }
@@ -82,20 +82,29 @@ public class Server {
         scheduler.scheduleAtFixedRate(task, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
     }
 
-    private static void SearchPeer(List<Socket> activeSockets, ExecutorService executor, Socket clientSocket, FileStorage fileStorage) {
+    private static void SearchPeer(List<Socket> activeSockets,
+                                   ExecutorService executor,
+                                   Socket clientSocket,
+                                   FileStorage fileStorage) throws IOException {
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-             OutputStream out = clientSocket.getOutputStream();
-             PrintWriter writer = new PrintWriter(out, true)) {
+        BufferedReader reader = new BufferedReader(
+                new InputStreamReader(clientSocket.getInputStream()));
+        PrintWriter writer = new PrintWriter(
+                clientSocket.getOutputStream(), true);
 
-            String line = reader.readLine();
+        String line = reader.readLine();
 
-            if (!TryFindTrustedClient(line, writer)) {
-                executor.execute(new RequestHandler(activeSockets, clientSocket, reader, writer, line,  fileStorage, files, trustedClients));
-            }
-
-        } catch (IOException e) {
-            logger.severe("Error handling DOWNLOAD fallback: " + e.getMessage());
+        if (!TryFindTrustedClient(line, writer)) {
+            executor.execute(new RequestHandler(
+                    activeSockets,
+                    clientSocket,
+                    reader,
+                    writer,
+                    line,
+                    fileStorage,
+                    files,
+                    trustedClients
+            ));
         }
     }
 

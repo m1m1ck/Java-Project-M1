@@ -48,6 +48,7 @@ public class Test {
 
             Process clientProcess = launchProcess("Client", clientArgs);
             clientProcesses.add(clientProcess);
+            Thread.sleep(10000);
         }
 
         for (Process clientProcess : clientProcesses) {
