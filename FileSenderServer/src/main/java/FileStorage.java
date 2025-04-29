@@ -1,36 +1,49 @@
 import java.io.File;
-import java.io.FileOutputStream;
+import java.util.List;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.io.RandomAccessFile;
 import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.text.DecimalFormat;
-import java.text.DecimalFormatSymbols;
 import java.util.ArrayList;
-import java.util.List;
+import java.text.DecimalFormat;
+import java.io.RandomAccessFile;
 import java.util.logging.Logger;
+import java.io.FileOutputStream;
+import java.security.MessageDigest;
+import java.text.DecimalFormatSymbols;
+import java.security.NoSuchAlgorithmException;
 
 /**
- * Manages server files, including reading the directory,
- * computing (or storing) file MD5, and retrieving blocks.
+ * Manages storage operations for the server or client, including file hashing,
+ * block retrieval, file saving, and writing client/server statistics.
  */
 public class FileStorage {
+    /** Logger instance for recording informational and error messages related to file storage operations. */
     private static final Logger logger = Logger.getLogger(FileStorage.class.getName());
+    /** The base directory where files are stored or retrieved from. */
     private final String baseDirectory;
+    /** The size (in bytes) of each block when reading or writing file chunks. */
     private final int blockSize;
+    /** Formatter used to format time values in seconds with six decimal places and a dot as the decimal separator. */
+    private final DecimalFormat timeFormat;
 
     /**
-     * @param baseDirectory the directory path where files are located
-     * Initializes the FileStorage by scanning the directory
+     * Constructs a FileStorage instance tied to a specific directory and block size.
+     *
+     * @param baseDirectory the directory path where files are stored
+     * @param blockSize     the number of bytes per file block
      */
     public FileStorage(String baseDirectory, int blockSize) {
         this.baseDirectory = baseDirectory;
         this.blockSize = blockSize;
+
+        timeFormat = new DecimalFormat("00.000000");
+        DecimalFormatSymbols symbols = new DecimalFormatSymbols();
+        symbols.setDecimalSeparator('.');
+        timeFormat.setDecimalFormatSymbols(symbols);
+
         logger.info("Initializing FileStorage for directory: " + baseDirectory);
+
         File dir = new File(baseDirectory);
         if (!dir.exists() || !dir.isDirectory()) {
             try{
@@ -43,47 +56,59 @@ public class FileStorage {
     }
 
 
-    public void createclientcsv(long time, int gothelped, int helped ,ClientConfig config) {
-        String fileName = "../resources/stats/client"+ config.getPort() +".csv";
-
+    /**
+     * Writes client statistics to a CSV file named based on the client's port.
+     *
+     * @param time       time in milliseconds to download the file
+     * @param gotHelped  number of times the client received token from trusted client
+     * @param helped     number of times the client send token as trusted client
+     * @param config     the ClientConfig instance associated with the client
+     */
+    public void writeClientStats(long time, int gotHelped, int helped, ClientConfig config) {
+        String fileName = "../resources/stats/client" + config.getPort() + ".csv";
         double seconds = time / 1000.0;
-        DecimalFormat df = new DecimalFormat("00.000000");
-        DecimalFormatSymbols decimalFormatSymbols = new DecimalFormatSymbols();
-        decimalFormatSymbols.setDecimalSeparator('.');
-        df.setDecimalFormatSymbols(decimalFormatSymbols);
 
-        String line1 = "time to download, "   + df.format(seconds);
-        String line2 = "got helped, " + gothelped;
-        String line3 = "helped, " + helped;
-        
+        List<String> lines = List.of(
+                "time to download, " + timeFormat.format(seconds),
+                "got helped, " + gotHelped,
+                "helped, " + helped
+        );
 
-        try (PrintWriter writer = new PrintWriter(new FileWriter(fileName, false))) {
-            writer.println(line1);
-            writer.println(line2);
-            writer.println(line3);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        writeLinesToFile(fileName, lines);
     }
 
-
-    public void createservercsv(int closed) {
+    /**
+     * Writes server statistics (e.g., number of closed connections) to a fixed CSV file.
+     *
+     * @param closed number of connections closed by the server
+     */
+    public void writeServerStats(int closed) {
         String fileName = "../resources/stats/outputserver.csv";
+        List<String> lines = List.of("closed connections, " + closed);
+        writeLinesToFile(fileName, lines);
+    }
 
-
-        String line1 = "closed connections, " + closed;
-        
+    /**
+     * Writes lines of text to a file, overwriting existing content.
+     *
+     * @param fileName the target file path
+     * @param lines    the content lines to write
+     */
+    private void writeLinesToFile(String fileName, List<String> lines) {
         try (PrintWriter writer = new PrintWriter(new FileWriter(fileName, false))) {
-            writer.println(line1);
-
+            for (String line : lines) {
+                writer.println(line);
+            }
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.warning("Failed to write file: " + fileName + ". Error: " + e.getMessage());
         }
     }
 
     /**
-     * Returns a list of available file IDs.
-     * The result of the sha-256 algorithm is used as an identifier.
+     * Returns a list of available files as ServerFile objects.
+     * Uses the SHA-256 hash of the file content as the file identifier.
+     *
+     * @return a list of files with their SHA-256 and MD5 hashes
      */
     public List<ServerFile> getFiles() {
         List<ServerFile> fileHashes = new ArrayList<>();
@@ -92,26 +117,32 @@ public class FileStorage {
 
         if (files != null) {
             for (File file : files) {
-                if (file.isFile()) {
-                    try {
-                        String shaHash = generateHash(file, "SHA-256");
-                        String md5Hash = generateHash(file, "MD5");
-                        fileHashes.add(new ServerFile(file.getName(), shaHash, md5Hash));
-                    } catch (IOException | NoSuchAlgorithmException e) {
-                        e.printStackTrace();
-                    }
+                if (!file.isFile()) continue;
+                try {
+                    String shaHash = generateHash(file, "SHA-256");
+                    String md5Hash = generateHash(file, "MD5");
+                    fileHashes.add(new ServerFile(file.getName(), shaHash, md5Hash));
+                } catch (IOException | NoSuchAlgorithmException e) {
+                    e.printStackTrace();
                 }
             }
         }
         return fileHashes;
     }
 
-
-    private String generateHash(File file, String algorithm)  throws IOException, NoSuchAlgorithmException {
+    /**
+     * Computes a hash for a given file using the specified algorithm.
+     *
+     * @param file      the file to hash
+     * @param algorithm hash algorithm name ("MD5", "SHA-256")
+     * @return hexadecimal string representation of the hash
+     * @throws IOException              if reading the file fails
+     * @throws NoSuchAlgorithmException if the algorithm is not available
+     */
+    private String generateHash(File file, String algorithm) throws IOException, NoSuchAlgorithmException {
         MessageDigest digest = MessageDigest.getInstance(algorithm);
 
         byte[] fileBytes = Files.readAllBytes(file.toPath());
-
         byte[] hashBytes = digest.digest(fileBytes);
 
         StringBuilder hexString = new StringBuilder();
@@ -124,13 +155,25 @@ public class FileStorage {
 
     /**
      * Returns the MD5 checksum of the specified file.
-     * identifier of the file
+     *
+     * @param filename name of the file to hash
+     * @return the MD5 hash string
+     * @throws IOException              if file reading fails
+     * @throws NoSuchAlgorithmException if MD5 algorithm is unavailable
      */
     public String getMD5(String filename) throws IOException, NoSuchAlgorithmException {
         File file = new File(baseDirectory + "/" + filename);
         return generateHash(file, "MD5");
     }
 
+    /**
+     * Retrieves a specific block of a file based on the block index.
+     *
+     * @param filename    the name of the file
+     * @param blockIndex  the index of the block to retrieve (0-based)
+     * @return a byte array containing the requested block, or an empty array if index is out of range
+     * @throws IOException if the file does not exist or cannot be read
+     */
     public byte[] getBlock(String filename, int blockIndex) throws IOException {
         File file = new File(baseDirectory + "/" + filename);
 
@@ -157,6 +200,12 @@ public class FileStorage {
         }
     }
 
+    /**
+     * Saves a byte array as a file in the configured base directory.
+     *
+     * @param fileData the byte content of the file
+     * @param fileName the name to assign to the saved file
+     */
     public void saveFile(byte[] fileData, String fileName) {
         File dir = new File(baseDirectory);
 

@@ -1,25 +1,65 @@
 import java.util.Map;
 
 /**
- * Holds server configuration parameters such as port, Cs, T, P,
- * and the directory containing files for the server.
+ * Holds server configuration parameters such as port, maximum number of parallel connections (Cs),
+ * probability of connection closure (P), frequency of closure attempts (T),
+ * and the directory for server files.
+ * <p>
+ * Inherits common configuration logic from {@link BaseConfig}.
  */
 public class ServerConfig extends BaseConfig {
-    private int Cs = 5;           // Maximum number of parallel connections
-    private double P = 0.2;       // Probability of connection closure
-    private double T = 10;           // Frequency (in seconds) to attempt closure
 
-    // Getters
-    public int getCs() { return Cs; }
-    public double getP() { return P; }
-    public double getT() { return T; }
+    /** Maximum number of simultaneous client connections. */
+    private int cs = 5;
+
+    /** Probability of a connection being closed during a check. */
+    private double p = 0.2;
+
+    /** Interval in seconds at which to attempt connection closure. */
+    private double t = 10;
 
     /**
-     * Parses command-line arguments in the form of --key=value
-     * and creates a ServerConfig object with the specified settings.
+     * Returns the maximum number of concurrent connections (Cs).
+     * @return the number of allowed parallel connections
+     */
+    public int getCs() {
+        return cs;
+    }
+
+    /**
+     * Returns the probability (P) of connection closure.
+     * @return the connection closure probability
+     */
+    public double getP() {
+        return p;
+    }
+
+    /**
+     * Returns the time interval (T) in seconds for closure attempts.
+     * @return the closure check interval in seconds
+     */
+    public double getT() {
+        return t;
+    }
+
+    /**
+     * Creates and configures a {@code ServerConfig} instance by parsing command-line arguments
+     * in the format {@code --key=value}.
      *
-     * @param args command-line arguments
-     * @return a configured ServerConfig instance
+     * <p>Recognized keys:
+     * <ul>
+     *     <li><b>port</b> - server port</li>
+     *     <li><b>Cs</b> - maximum parallel connections</li>
+     *     <li><b>P</b> - connection closure probability</li>
+     *     <li><b>T</b> - closure check interval</li>
+     *     <li><b>filesDir</b> - path to server files</li>
+     *     <li><b>B</b> - number of bytes per block request</li>
+     * </ul>
+     *
+     * <p>If {@code filesDir} is not set, a default path is used.
+     *
+     * @param args the command-line arguments
+     * @return a fully populated {@code ServerConfig} object
      */
     public static ServerConfig fromArgs(String[] args) {
         ServerConfig config = new ServerConfig();
@@ -29,13 +69,13 @@ public class ServerConfig extends BaseConfig {
             config.port = Integer.parseInt(argMap.get("port"));
         }
         if (argMap.containsKey("Cs")) {
-            config.Cs = Integer.parseInt(argMap.get("Cs"));
+            config.cs = Integer.parseInt(argMap.get("Cs"));
         }
         if (argMap.containsKey("P")) {
-            config.P = Double.parseDouble(argMap.get("P"));
+            config.p = Double.parseDouble(argMap.get("P"));
         }
         if (argMap.containsKey("T")) {
-            config.T = Double.parseDouble(argMap.get("T"));
+            config.t = Double.parseDouble(argMap.get("T"));
         }
         if (argMap.containsKey("filesDir")) {
             config.filesDirectory = argMap.get("filesDir");
@@ -43,18 +83,24 @@ public class ServerConfig extends BaseConfig {
         if (argMap.containsKey("B")) {
             config.b = Integer.parseInt(argMap.get("B"));
         }
+
+        // Set default directory path
         config.filesDirectory = "../resources/ServerResources/";
 
         return config;
     }
 
+    /**
+     * Returns a string representation of this configuration.
+     * @return a string with all server config values
+     */
     @Override
     public String toString() {
         return "ServerConfig{" +
                 "port=" + port +
-                ", Cs=" + Cs +
-                ", P=" + P +
-                ", T=" + T +
+                ", cs=" + cs +
+                ", p=" + p +
+                ", t=" + t +
                 ", filesDirectory='" + filesDirectory + '\'' +
                 ", b=" + b +
                 '}';

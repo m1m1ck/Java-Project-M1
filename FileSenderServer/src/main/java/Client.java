@@ -1,45 +1,110 @@
 import java.io.*;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
+import java.net.Socket;
+import java.net.ServerSocket;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
+import java.nio.charset.StandardCharsets;
+import java.security.NoSuchAlgorithmException;
 
+/**
+ * The {@code Client} class simulates a client that connects to a server to retrieve file blocks.
+ * It supports multithreaded downloading, token-based peer assistance (trusted client),
+ * and file integrity verification via MD5.
+ * <p>
+ * Key responsibilities include:
+ * <ul>
+ *     <li>Connecting to the main server to fetch available file IDs</li>
+ *     <li>Downloading files in parallel block-wise from the server or trusted peers</li>
+ *     <li>Verifying downloaded files using server-provided MD5 hashes</li>
+ *     <li>Launching a local trusted client server to assist others via tokens</li>
+ *     <li>Tracking and writing client-side statistics (download time, tokens used, help provided)</li>
+ * </ul>
+ *
+ * <p>
+ * The client can either download directly from the server or use a peer-assisted model via
+ * trusted token exchanges. When another client requests help via a token, this client
+ * can accept the request (with probability {@code PC}) and serve the block if the token is valid.
+ *
+ * <p>
+ * Internal token management uses {@link TokenInfo}, stored in a thread-safe map with a periodic
+ * cleanup mechanism to remove expired tokens.
+ *
+ * <p>
+ * Command-line arguments are parsed using {@link ClientConfig#fromArgs(String[])} to configure
+ * the server address, port, file ID to download, concurrency level, and other client settings.
+ *
+ * @see ClientConfig
+ * @see FileStorage
+ */
 public class Client {
+
+    /**
+     * Internal record to store token metadata used for trusted client transfers.
+     *
+     * @param fileId               the ID of the file the token grants access to
+     * @param expirationTimeMillis the UNIX timestamp (in ms) at which the token becomes invalid
+     */
+    private record TokenInfo(String fileId, long expirationTimeMillis) { }
+
+    /** Logger for client-side events and errors. */
     private static final Logger logger = Logger.getLogger(Client.class.getName());
+
+    /** Map of valid tokens issued by this client to other peers. */
     private static final Map<String, TokenInfo> validTokens = new ConcurrentHashMap<>();
 
-    private record TokenInfo(String fileId, long expirationTimeMillis) {
-    }
-
+    /** Scheduled service to periodically clean up expired tokens. */
     private static final ScheduledExecutorService cleanerService = Executors.newSingleThreadScheduledExecutor();
+
+    /** Random number generator used for probabilistic token denial. */
     private static final Random rand = new Random();
+
+    /** Configuration object loaded from command-line arguments. */
+    private static ClientConfig config;
+
+    /** Manages file operations for the client. */
+    private static FileStorage fileStorage;
+
+    /** Counter for the number of tokens received by this client while downloading. */
     private static int ReceivedToken = 0;
+
+    /** Duration of file download in milliseconds. */
     private static long durationMs = 0;
+
+    /** Number of times this client helped another peer with a file block. */
     private static int helped = 0;
 
+    /**
+     * Main entry point for the client.
+     *
+     * @param args command-line arguments
+     */
     public static void main(String[] args) {
-        ClientConfig config = ClientConfig.fromArgs(args);
+        config = ClientConfig.fromArgs(args);
         logger.info("[Client] Starting: " + config);
 
-        //time from here
         long start = System.currentTimeMillis();
-        FileStorage fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
+
+        fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
 
         try {
-            downloadFile(config, fileStorage);
+            selectAndDownloadFile();
             
             durationMs = System.currentTimeMillis() - start;
-            fileStorage.createclientcsv(durationMs, ReceivedToken, 0, config);
-            //to here.
-            startTrustedClientServerSingleThread(config, fileStorage);
+
+            fileStorage.writeClientStats(durationMs, ReceivedToken, 0, config);
+
+            startTrustedClientServer();
         } catch (IOException | InterruptedException e) {
             logger.severe("[Client] Critical error: " + e.getMessage());
         }
     }
 
-    private static void downloadFile(ClientConfig config, FileStorage fileStorage) throws IOException, InterruptedException {
+    /**
+     * Sends request to server to obtain list of files.
+     * Afterwards selects a file (either specific or random) and initiates download.
+     */
+    private static void selectAndDownloadFile() throws IOException, InterruptedException {
         List<String> possibleFileIds = new ArrayList<>();
         String fileId = config.getFileId();
 
@@ -63,10 +128,15 @@ public class Client {
             fileId = possibleFileIds.get(ThreadLocalRandom.current().nextInt(possibleFileIds.size()));
         }
 
-        downloadFileBlocks(config, fileStorage, fileId);
+        downloadFileInBlocks(fileId);
     }
 
-    private static void downloadFileBlocks(ClientConfig config, FileStorage fileStorage, String fileId) throws InterruptedException {
+    /**
+     * Downloads the specified file using multiple threads to retrieve blocks in parallel.
+     *
+     * @param fileId the file identifier to download
+     */
+    private static void downloadFileInBlocks(String fileId) throws InterruptedException {
         boolean fileDownloaded = false;
 
         while (!fileDownloaded) {
@@ -78,7 +148,7 @@ public class Client {
                 int threadIndex = i;
                 executor.submit(() -> {
                     try {
-                        downloadBlocksForThread(config, fileId, threadIndex, blocksMap);
+                        downloadBlocksByThread(fileId, threadIndex, blocksMap);
                     } finally {
                         latch.countDown();
                     }
@@ -89,14 +159,19 @@ public class Client {
             latch.await();
 
             try {
-                fileDownloaded = saveAndVerifyDownloadedFile(config, fileStorage, fileId, blocksMap);
+                fileDownloaded = saveAndVerifyDownloadedFile(fileId, blocksMap);
             } catch (IOException | NoSuchAlgorithmException e) {
                 logger.warning("[Download] Verification failed, retrying: " + e.getMessage());
             }
         }
     }
 
-    // Utility: read a line (up to '\n') from DataInputStream
+    /**
+     * Reads a single line from the data stream, terminated by newline.
+     *
+     * @param in the input stream
+     * @return the read line without the newline character
+     */
     private static String readLine(DataInputStream in) throws IOException {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         int b;
@@ -104,11 +179,19 @@ public class Client {
             if (b == '\n') break;
             buf.write(b);
         }
-        return buf.toString("UTF-8").trim();
+        return buf.toString(StandardCharsets.UTF_8).trim();
     }
 
-    // --- Modified to use Data streams only ---
-    private static void downloadBlocksForThread(ClientConfig config, String fileId, int threadIndex, ConcurrentMap<Integer, byte[]> blocksMap) {
+    /**
+     * Downloads file blocks using a single thread.
+     *
+     * @param fileId    file identifier
+     * @param threadIndex thread number used to calculate block indexes
+     * @param blocksMap concurrent map to store retrieved blocks
+     */
+    private static void downloadBlocksByThread(String fileId,
+                                               int threadIndex,
+                                               ConcurrentMap<Integer, byte[]> blocksMap) {
         int blockIndex = threadIndex;
 
         try (Socket socket = new Socket(config.getServerHost(), config.getServerPort());
@@ -127,14 +210,18 @@ public class Client {
                 if (response.startsWith("SENDING")) {
                     int length = dataIn.readInt();
                     if (length <= 0) break;
+
                     byte[] buffer = new byte[length];
                     dataIn.readFully(buffer);
                     blocksMap.put(blockIndex, buffer);
                     blockIndex += config.getDC();
+
                 } else if (response.startsWith("TOKEN")) {
+
                     ReceivedToken++;
                     logger.info("Client received token: " + response);
-                    handleTokenDownloadWithStream(config, response, fileId, blockIndex, blocksMap);
+
+                    downloadBlocksUsingToken(response, fileId, blockIndex, blocksMap);
                     break;
                 } else {
                     break;
@@ -145,25 +232,38 @@ public class Client {
         }
     }
 
-    private static void handleTokenDownloadWithStream(ClientConfig config, String tokenResponse, String fileId, int blockIndex, ConcurrentMap<Integer, byte[]> blocksMap) {
+    /**
+     * Attempts to download file blocks using a token from a trusted client.
+     *
+     * @param tokenResponse the response string containing the token
+     * @param fileId        file identifier
+     * @param blockIndex    block index to start downloading from
+     * @param blocksMap     map to store downloaded blocks
+     */
+    private static void downloadBlocksUsingToken(String tokenResponse,
+                                                 String fileId,
+                                                 int blockIndex,
+                                                 ConcurrentMap<Integer, byte[]> blocksMap) {
         String[] parts = tokenResponse.split("\\s+");
         if (parts.length < 4) return;
+
         String token = parts[1], host = parts[2];
         int port = Integer.parseInt(parts[3]);
+
         while (true) {
             try (Socket peer = new Socket(host, port);
                  DataOutputStream pout = new DataOutputStream(peer.getOutputStream());
                  DataInputStream  pin  = new DataInputStream(peer.getInputStream())) {
 
-                // send the DOWNLOAD_TOKEN command over the same DataOutputStream
                 pout.writeBytes("DOWNLOAD_TOKEN " + token + " " + fileId + " " + blockIndex + "\n");
                 pout.flush();
 
-                // read the reply line via your utility
                 String resp = readLine(pin);
+
                 if (resp.startsWith("SENDING")) {
                     int len = pin.readInt();
                     if (len <= 0) break;
+
                     byte[] buf = new byte[len];
                     pin.readFully(buf);
                     blocksMap.put(blockIndex, buf);
@@ -178,8 +278,15 @@ public class Client {
         }
     }
 
-    // saveAndVerifyDownloadedFile remains unchanged
-    private static boolean saveAndVerifyDownloadedFile(ClientConfig config, FileStorage fileStorage, String fileId, Map<Integer, byte[]> blocksMap) throws IOException, NoSuchAlgorithmException {
+    /**
+     * Assembles and saves a downloaded file from blocks, then verifies its MD5 hash with the server.
+     *
+     * @param fileId    the file ID
+     * @param blocksMap the map of downloaded blocks
+     * @return true if the file is verified correctly, false otherwise
+     */
+    private static boolean saveAndVerifyDownloadedFile(String fileId, Map<Integer, byte[]> blocksMap)
+            throws IOException, NoSuchAlgorithmException {
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         blocksMap.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
@@ -207,26 +314,32 @@ public class Client {
         }
     }
 
-    // startTrustedClientServerSingleThread unchanged
-
-    public static void startTrustedClientServerSingleThread(ClientConfig config, FileStorage fileStorage) {
+    /**
+     * Starts a trusted client server to assist other clients via token-based downloads.
+     */
+    public static void startTrustedClientServer() {
         cleanerService.scheduleAtFixedRate(Client::cleanExpiredTokens, 5, 5, TimeUnit.SECONDS);
 
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
             logger.info("[TrustedServer] Started on port " + config.getPort());
             while (true) {
                 Socket socket = serverSocket.accept();
-                handleTrustedClient(socket, fileStorage, config);
-                fileStorage.createclientcsv(durationMs, ReceivedToken, helped, config);
+                handleRequest(socket);
+                fileStorage.writeClientStats(durationMs, ReceivedToken, helped, config);
             }
         } catch (IOException e) {
-            logger.severe("[TrustedServer] Critical error: " + e.getMessage());
+            logger.severe("[TrustedClient] Critical error: " + e.getMessage());
         } finally {
             cleanerService.shutdown();
         }
     }
 
-    private static void handleTrustedClient(Socket socket, FileStorage fileStorage, ClientConfig config) {
+    /**
+     * Handles incoming trusted client requests for tokens or block downloads.
+     *
+     * @param socket the incoming client socket
+     */
+    private static void handleRequest(Socket socket) {
         try (Socket s = socket;
              DataInputStream reader = new DataInputStream(s.getInputStream());
              DataOutputStream writer = new DataOutputStream(s.getOutputStream())) {
@@ -288,8 +401,9 @@ public class Client {
         }
     }
 
-
-
+    /**
+     * Removes expired tokens from the internal token map.
+     */
     private static void cleanExpiredTokens() {
         long now = System.currentTimeMillis();
         validTokens.entrySet().removeIf(entry -> entry.getValue().expirationTimeMillis < now);

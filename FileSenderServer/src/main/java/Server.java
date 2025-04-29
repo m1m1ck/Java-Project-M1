@@ -1,41 +1,74 @@
 import java.io.*;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.*;
+import java.net.Socket;
+import java.net.ServerSocket;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
 /**
- * Entry point for launching the server. This class configures the server,
- * initializes components, and listens for incoming client connections.
+ * The {@code Server} class represents the central file server.
+ * It handles incoming client connections and supports the following commands:
+ *
+ * <ul>
+ *     <li>{@code LIST_FILES} — responds with a list of available files and their unique identifiers (SHA-256);</li>
+ *     <li>{@code DOWNLOAD <fileId> <blockIndex>} — sends the requested block of the specified file to the client;</li>
+ *     <li>{@code MD5 <fileId> <hash> <clientPort>} — verifies the integrity of a downloaded file by comparing
+ *         its MD5 hash, and if successful, may issue a token for peer-to-peer sharing.</li>
+ * </ul>
+ *
+ * The server listens on a specified port and uses {@link FileStorage} to load files and retrieve file blocks.
+ * It supports concurrent client requests by spawning a dedicated thread per connection.
+ *
+ * Upon successful file verification, the server can generate and issue a token that allows the verified
+ * client to act as a temporary trusted peer (TrustedClient), serving blocks to other clients.
  */
 public class Server {
-    private static final Logger logger = Logger.getLogger(Server.class.getName());
-    private static Map<String, List<TrustedClient>> trustedClients;
-    private static List<ServerFile> files;
-    private static int closeconnection = 0;
 
+    /** Logger for server events */
+    private static final Logger logger = Logger.getLogger(Server.class.getName());
+
+    /** Map from file ID to list of trusted clients for that file */
+    private static final Map<String, List<TrustedClient>> trustedClients = new ConcurrentHashMap<>();
+
+    /** List of currently active client sockets */
+    private static final List<Socket> activeSockets = new ArrayList<>();
+
+    /** Configuration settings for the server, loaded from a cmd args or defaults. */
+    private static ServerConfig config;
+
+    /** Manages file storage operations for the server, such as retrieving files. */
+    private static FileStorage fileStorage;
+
+    /** List of files available on the server */
+    private static List<ServerFile> files;
+
+    /** Counter for closed connections (simulated failures) */
+    private static int closedConnections = 0;
+
+    /**
+     * Main method. Parses server configuration, initializes storage and thread pool,
+     * starts disconnection simulator, and accepts incoming client connections.
+     * @param args command-line arguments for ServerConfig
+     */
     public static void main(String[] args) {
-        ServerConfig config = ServerConfig.fromArgs(args);
+        config = ServerConfig.fromArgs(args);
 
         logger.info("Server starting with parameters: " + config);
 
-        FileStorage fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
+        fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
         files = fileStorage.getFiles();
 
-        trustedClients = new ConcurrentHashMap<>();
         for (ServerFile file : files) {
             trustedClients.put(file.sha256(), new ArrayList<>());
         }
 
         ExecutorService executor = Executors.newFixedThreadPool(config.getCs());
-        fileStorage.createservercsv(closeconnection);
+        fileStorage.writeServerStats(closedConnections);
 
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
             logger.info("Server is listening on port: " + config.getPort());
 
-            List<Socket> activeSockets = new ArrayList<>();
-            startDisconnectionSimulator(activeSockets, config.getP(), config.getT(), fileStorage);
+            startDisconnectionSimulator(config.getP(), config.getT());
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -48,7 +81,7 @@ public class Server {
                     RequestHandler handler = new RequestHandler(activeSockets, clientSocket, fileStorage, files, trustedClients);
                     executor.execute(handler);
                 } else {
-                    SearchPeer(activeSockets, executor, clientSocket, fileStorage);
+                    SearchPeer(executor, clientSocket);
                 }
             }
         } catch (IOException e) {
@@ -58,47 +91,57 @@ public class Server {
         }
     }
 
-    private static void startDisconnectionSimulator(List<Socket> activeSockets, double probability, double intervalSeconds, FileStorage fileStorage ) {
+    /**
+     * Starts a scheduled task that simulates disconnections by randomly closing one active socket
+     * at each interval with the given probability.
+     * @param probability probability of a disconnection each interval
+     * @param intervalSeconds interval in seconds between disconnection attempts
+     */
+    private static void startDisconnectionSimulator(double probability, double intervalSeconds) {
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
         Random rand = new Random();
         Runnable task = () -> {
-            if (Math.random() < probability) {
-                try {
-                    synchronized (activeSockets) {
-                        while (!activeSockets.isEmpty()) {
-                            int idx = rand.nextInt(activeSockets.size());
-                            Socket socket = activeSockets.get(idx);
-                            if (socket.isClosed()) {
-                                activeSockets.remove(idx);
-                            } else {
-                                Server.logger.warning("Closing connection to client (simulated failure): "
-                                    + socket.getRemoteSocketAddress());
-                                socket.close();
-                                closeconnection++;
-                                fileStorage.createservercsv(closeconnection);;
-                                break;
-                            }
+            if (Math.random() > probability) return;
+            try {
+                synchronized (activeSockets) {
+                    while (!activeSockets.isEmpty()) {
+                        int idx = rand.nextInt(activeSockets.size());
+                        Socket socket = activeSockets.get(idx);
+                        if (socket.isClosed()) {
+                            activeSockets.remove(idx);
+                        } else {
+                            logger.warning("Closing connection to client (simulated failure): "
+                                           + socket.getRemoteSocketAddress());
+                            socket.close();
+                            closedConnections++;
+                            fileStorage.writeServerStats(closedConnections);
+                            break;
                         }
                     }
-                } catch (IOException e) {
-                    Server.logger.severe("Error while closing socket: " + e.getMessage());
                 }
+            } catch (IOException e) {
+                logger.severe("Error while closing socket: " + e.getMessage());
             }
         };
-
-        scheduler.scheduleAtFixedRate(task, (long)(intervalSeconds * 1000), (long)(intervalSeconds * 1000), TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(task,
+                (long)(intervalSeconds * 1000),
+                (long)(intervalSeconds * 1000),
+                TimeUnit.MILLISECONDS);
     }
 
-    private static void SearchPeer(List<Socket> activeSockets,
-                                   ExecutorService executor,
-                                   Socket clientSocket,
-                                   FileStorage fileStorage) throws IOException {
+    /**
+     * If the thread pool is full, attempts to find a trusted client to handle a DOWNLOAD request.
+     * If a trusted client is found, sends the TOKEN from the peer back to the client; otherwise,
+     * hands off to a new RequestHandler on this same socket.
+     * @param executor thread pool for executing new handlers
+     * @param clientSocket the client socket that requested DOWNLOAD
+     * @throws IOException if I/O error occurs
+     */
+    private static void SearchPeer(ExecutorService executor, Socket clientSocket) throws IOException {
 
-        BufferedReader reader = new BufferedReader(
-                new InputStreamReader(clientSocket.getInputStream()));
-        PrintWriter writer = new PrintWriter(
-                clientSocket.getOutputStream(), true);
+        BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+        PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true);
 
         String line = reader.readLine();
 
@@ -116,6 +159,12 @@ public class Server {
         }
     }
 
+    /**
+     * Iterates through trusted clients for the requested fileId and attempts to get a TOKEN.
+     * @param line client request line, expected "DOWNLOAD fileId blockIndex"
+     * @param writer to send TOKEN back if found
+     * @return true if a peer provided a TOKEN, false otherwise
+     */
     private static boolean TryFindTrustedClient(String line, PrintWriter writer) {
         if (line == null || !line.trim().startsWith("DOWNLOAD")) {
             return false;
@@ -129,10 +178,10 @@ public class Server {
         String fileId = parts[1];
 
         List<TrustedClient> candidates = trustedClients.getOrDefault(fileId, List.of());
-        List<TrustedClient> shuffledcandidates = new ArrayList<>(candidates);
-        Collections.shuffle(shuffledcandidates);
+        List<TrustedClient> shuffledCandidates = new ArrayList<>(candidates);
+        Collections.shuffle(shuffledCandidates);
 
-        for (TrustedClient peer : shuffledcandidates) {
+        for (TrustedClient peer : shuffledCandidates) {
             try (Socket peerSocket = new Socket(peer.host(), peer.port());
                  PrintWriter peerWriter = new PrintWriter(peerSocket.getOutputStream(), true);
                  BufferedReader peerReader = new BufferedReader(new InputStreamReader(peerSocket.getInputStream()))) {
@@ -148,7 +197,6 @@ public class Server {
                 throw new RuntimeException(e);
             }
         }
-
-        return  false;
+        return false;
     }
 }
