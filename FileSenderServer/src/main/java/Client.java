@@ -15,16 +15,23 @@ public class Client {
 
     private static final ScheduledExecutorService cleanerService = Executors.newSingleThreadScheduledExecutor();
     private static final Random rand = new Random();
+    private static int ReceivedToken = 0;
+    private static long durationMs = 0;
+    private static int helped = 0;
 
     public static void main(String[] args) {
         ClientConfig config = ClientConfig.fromArgs(args);
         logger.info("[Client] Starting: " + config);
 
         //time from here
+        long start = System.currentTimeMillis();
         FileStorage fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
 
         try {
             downloadFile(config, fileStorage);
+            
+            durationMs = System.currentTimeMillis() - start;
+            fileStorage.createclientcsv(durationMs, ReceivedToken, 0, config);
             //to here.
             startTrustedClientServerSingleThread(config, fileStorage);
         } catch (IOException | InterruptedException e) {
@@ -74,7 +81,6 @@ public class Client {
                         downloadBlocksForThread(config, fileId, threadIndex, blocksMap);
                     } finally {
                         latch.countDown();
-                        System.out.println("latch" + threadIndex);
                     }
                 });
             }
@@ -126,6 +132,7 @@ public class Client {
                     blocksMap.put(blockIndex, buffer);
                     blockIndex += config.getDC();
                 } else if (response.startsWith("TOKEN")) {
+                    ReceivedToken++;
                     logger.info("Client received token: " + response);
                     handleTokenDownloadWithStream(config, response, fileId, blockIndex, blocksMap);
                     break;
@@ -203,7 +210,6 @@ public class Client {
     // startTrustedClientServerSingleThread unchanged
 
     public static void startTrustedClientServerSingleThread(ClientConfig config, FileStorage fileStorage) {
-        // Периодически чистить протухшие токены
         cleanerService.scheduleAtFixedRate(Client::cleanExpiredTokens, 5, 5, TimeUnit.SECONDS);
 
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
@@ -211,6 +217,7 @@ public class Client {
             while (true) {
                 Socket socket = serverSocket.accept();
                 handleTrustedClient(socket, fileStorage, config);
+                fileStorage.createclientcsv(durationMs, ReceivedToken, helped, config);
             }
         } catch (IOException e) {
             logger.severe("[TrustedServer] Critical error: " + e.getMessage());
@@ -224,7 +231,7 @@ public class Client {
              DataInputStream reader = new DataInputStream(s.getInputStream());
              DataOutputStream writer = new DataOutputStream(s.getOutputStream())) {
 
-            String line = readLine(reader); // используй readLine(DataInputStream)
+            String line = readLine(reader);
             if (line == null) return;
             String[] parts = line.trim().split("\\s+");
 
@@ -246,6 +253,7 @@ public class Client {
                 int port = s.getLocalPort();
                 writer.writeBytes("TOKEN " + token + " " + host + " " + port + "\n");
                 writer.flush();
+                helped++;
                 return;
             }
 
@@ -265,10 +273,10 @@ public class Client {
                 }
 
                 byte[] block = fileStorage.getBlock("output_" + fileId + ".txt", blockIndex);
-                writer.writeBytes("SENDING\n");  // пишем строку вручную
+                writer.writeBytes("SENDING\n");
                 writer.flush();
-                writer.writeInt(block.length); // пишем длину
-                writer.write(block);           // пишем данные
+                writer.writeInt(block.length);
+                writer.write(block);
                 writer.flush();
                 return;
             }

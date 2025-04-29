@@ -59,7 +59,7 @@ public class ClientConfig extends BaseConfig {
             config.pC = Float.parseFloat(argMap.get("Pc"));
         }
 
-        config.filesDirectory = Paths.get("src", "main", "resources", "Client_Port" + config.getPort()).toString();
+        config.filesDirectory = "../resources/ClientPort" + config.port;
 
         return config;
     }

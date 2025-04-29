@@ -13,6 +13,7 @@ public class Server {
     private static final Logger logger = Logger.getLogger(Server.class.getName());
     private static Map<String, List<TrustedClient>> trustedClients;
     private static List<ServerFile> files;
+    private static int closeconnection = 0;
 
     public static void main(String[] args) {
         ServerConfig config = ServerConfig.fromArgs(args);
@@ -28,12 +29,13 @@ public class Server {
         }
 
         ExecutorService executor = Executors.newFixedThreadPool(config.getCs());
+        fileStorage.createservercsv(closeconnection);
 
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
             logger.info("Server is listening on port: " + config.getPort());
 
             List<Socket> activeSockets = new ArrayList<>();
-            startDisconnectionSimulator(activeSockets, config.getP(), config.getT());
+            startDisconnectionSimulator(activeSockets, config.getP(), config.getT(), fileStorage);
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -56,7 +58,7 @@ public class Server {
         }
     }
 
-    private static void startDisconnectionSimulator(List<Socket> activeSockets, double probability, int intervalSeconds) {
+    private static void startDisconnectionSimulator(List<Socket> activeSockets, double probability, double intervalSeconds, FileStorage fileStorage ) {
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
         Random rand = new Random();
@@ -64,22 +66,28 @@ public class Server {
             if (Math.random() < probability) {
                 try {
                     synchronized (activeSockets) {
-                        Socket socket = activeSockets.get(rand.nextInt(activeSockets.size()));
-                        if (!socket.isClosed())
-                        {
-                            Server.logger.warning("Closing connection to client (simulated failure): " + socket.getRemoteSocketAddress());
-                            socket.close();
+                        while (!activeSockets.isEmpty()) {
+                            int idx = rand.nextInt(activeSockets.size());
+                            Socket socket = activeSockets.get(idx);
+                            if (socket.isClosed()) {
+                                activeSockets.remove(idx);
+                            } else {
+                                Server.logger.warning("Closing connection to client (simulated failure): "
+                                    + socket.getRemoteSocketAddress());
+                                socket.close();
+                                closeconnection++;
+                                fileStorage.createservercsv(closeconnection);;
+                                break;
+                            }
                         }
                     }
                 } catch (IOException e) {
                     Server.logger.severe("Error while closing socket: " + e.getMessage());
-                } finally {
-                    scheduler.shutdown();
                 }
             }
         };
 
-        scheduler.scheduleAtFixedRate(task, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(task, (long)(intervalSeconds * 1000), (long)(intervalSeconds * 1000), TimeUnit.MILLISECONDS);
     }
 
     private static void SearchPeer(List<Socket> activeSockets,
@@ -121,8 +129,10 @@ public class Server {
         String fileId = parts[1];
 
         List<TrustedClient> candidates = trustedClients.getOrDefault(fileId, List.of());
+        List<TrustedClient> shuffledcandidates = new ArrayList<>(candidates);
+        Collections.shuffle(shuffledcandidates);
 
-        for (TrustedClient peer : candidates) {
+        for (TrustedClient peer : shuffledcandidates) {
             try (Socket peerSocket = new Socket(peer.host(), peer.port());
                  PrintWriter peerWriter = new PrintWriter(peerSocket.getOutputStream(), true);
                  BufferedReader peerReader = new BufferedReader(new InputStreamReader(peerSocket.getInputStream()))) {

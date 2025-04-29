@@ -7,12 +7,12 @@ import java.util.Map;
 public class ServerConfig extends BaseConfig {
     private int Cs = 5;           // Maximum number of parallel connections
     private double P = 0.2;       // Probability of connection closure
-    private int T = 10;           // Frequency (in seconds) to attempt closure
+    private double T = 10;           // Frequency (in seconds) to attempt closure
 
     // Getters
     public int getCs() { return Cs; }
     public double getP() { return P; }
-    public int getT() { return T; }
+    public double getT() { return T; }
 
     /**
      * Parses command-line arguments in the form of --key=value
@@ -35,7 +35,7 @@ public class ServerConfig extends BaseConfig {
             config.P = Double.parseDouble(argMap.get("P"));
         }
         if (argMap.containsKey("T")) {
-            config.T = Integer.parseInt(argMap.get("T"));
+            config.T = Double.parseDouble(argMap.get("T"));
         }
         if (argMap.containsKey("filesDir")) {
             config.filesDirectory = argMap.get("filesDir");
@@ -43,7 +43,7 @@ public class ServerConfig extends BaseConfig {
         if (argMap.containsKey("B")) {
             config.b = Integer.parseInt(argMap.get("B"));
         }
-        config.filesDirectory = config.getClass().getClassLoader().getResource("ServerResources/").getPath();
+        config.filesDirectory = "../resources/ServerResources/";
 
         return config;
     }

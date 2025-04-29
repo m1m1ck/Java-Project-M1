@@ -1,10 +1,15 @@
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
@@ -34,6 +39,45 @@ public class FileStorage {
                 logger.warning("Directory does not exist and cannot be created: " + baseDirectory);
                 throw new RuntimeException(e);
             }
+        }
+    }
+
+
+    public void createclientcsv(long time, int gothelped, int helped ,ClientConfig config) {
+        String fileName = "../resources/stats/client"+ config.getPort() +".csv";
+
+        double seconds = time / 1000.0;
+        DecimalFormat df = new DecimalFormat("00.000000");
+        DecimalFormatSymbols decimalFormatSymbols = new DecimalFormatSymbols();
+        decimalFormatSymbols.setDecimalSeparator('.');
+        df.setDecimalFormatSymbols(decimalFormatSymbols);
+
+        String line1 = "time to download, "   + df.format(seconds);
+        String line2 = "got helped, " + gothelped;
+        String line3 = "helped, " + helped;
+        
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(fileName, false))) {
+            writer.println(line1);
+            writer.println(line2);
+            writer.println(line3);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    public void createservercsv(int closed) {
+        String fileName = "../resources/stats/outputserver.csv";
+
+
+        String line1 = "closed connections, " + closed;
+        
+        try (PrintWriter writer = new PrintWriter(new FileWriter(fileName, false))) {
+            writer.println(line1);
+
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
