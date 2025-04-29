@@ -43,7 +43,7 @@ public class ServerConfig extends BaseConfig {
         if (argMap.containsKey("B")) {
             config.b = Integer.parseInt(argMap.get("B"));
         }
-        config.filesDirectory = config.getClass().getClassLoader().getResource("ServerResources/").getPath();
+        config.filesDirectory ="../resources/ServerResources";
 
         return config;
     }

@@ -5,143 +5,127 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
-/**
- * Entry point for launching the server. This class configures the server,
- * initializes components, and listens for incoming client connections.
- */
 public class Server {
     private static final Logger logger = Logger.getLogger(Server.class.getName());
     private static Map<String, List<TrustedClient>> trustedClients;
     private static List<ServerFile> files;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         ServerConfig config = ServerConfig.fromArgs(args);
+        logger.info("Server starting: " + config);
 
-        logger.info("Server starting with parameters: " + config);
+        // Initialize file storage and file list
+        FileStorage storage = new FileStorage(config.getFilesDirectory(), config.getB());
+        files = storage.getFiles();
 
-        FileStorage fileStorage = new FileStorage(config.getFilesDirectory(), config.getB());
-        files = fileStorage.getFiles();
-
+        // Prepare trusted clients map
         trustedClients = new ConcurrentHashMap<>();
-        for (ServerFile file : files) {
-            trustedClients.put(file.sha256(), new ArrayList<>());
+        for (ServerFile f : files) {
+            trustedClients.put(f.sha256(), Collections.synchronizedList(new ArrayList<>()));
         }
 
-        ExecutorService executor = Executors.newFixedThreadPool(config.getCs());
+        // Executor for handling client requests
+        final ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(config.getCs());
+        List<Socket> active = Collections.synchronizedList(new ArrayList<>());
 
+        // --- Metrics setup ---
+        MetricsLogger metrics = new MetricsLogger("results_server.csv");
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        scheduler.scheduleAtFixedRate(() -> {
+            int activeCount = executor.getActiveCount();
+            metrics.logSnapshot(activeCount, config.getP(), config.getT(), config.getCs());
+        }, 0, 1, TimeUnit.SECONDS);
+
+        // Start disconnection simulator
+        startDisconnector(active, config.getP(), config.getT());
+
+        // Listen for client connections
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
-            logger.info("Server is listening on port: " + config.getPort());
-
-            List<Socket> activeSockets = new ArrayList<>();
-            startDisconnectionSimulator(activeSockets, config.getP(), config.getT());
-
+            logger.info("Listening on port " + config.getPort());
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                logger.info("New client connected: " + clientSocket.getRemoteSocketAddress());
+                Socket client = serverSocket.accept();
+                logger.info("New client: " + client.getRemoteSocketAddress());
+                active.add(client);
 
-                if (((ThreadPoolExecutor) executor).getActiveCount() < config.getCs()) {
-                    synchronized (activeSockets) {
-                        activeSockets.add(clientSocket);
-                    }
-                    RequestHandler handler = new RequestHandler(activeSockets, clientSocket, fileStorage, files, trustedClients);
-                    executor.execute(handler);
+                if (executor.getActiveCount() < config.getCs()) {
+                    executor.execute(new RequestHandler(active, client, storage, files, trustedClients));
                 } else {
-                    SearchPeer(activeSockets, executor, clientSocket, fileStorage);
+                    handleFallback(active, executor, client, storage);
                 }
             }
-        } catch (IOException e) {
-            logger.severe("Server socket error: " + e.getMessage());
         } finally {
+            scheduler.shutdown();
             executor.shutdown();
         }
     }
 
-    private static void startDisconnectionSimulator(List<Socket> activeSockets, double probability, int intervalSeconds) {
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-
-        Random rand = new Random();
-        Runnable task = () -> {
-            if (Math.random() < probability) {
-                try {
-                    synchronized (activeSockets) {
-                        Socket socket = activeSockets.get(rand.nextInt(activeSockets.size()));
-                        if (!socket.isClosed())
-                        {
-                            Server.logger.warning("Closing connection to client (simulated failure): " + socket.getRemoteSocketAddress());
-                            socket.close();
-                        }
-                    }
-                } catch (IOException e) {
-                    Server.logger.severe("Error while closing socket: " + e.getMessage());
-                } finally {
-                    scheduler.shutdown();
+    private static void startDisconnector(List<Socket> active, double p, int interval) {
+        ScheduledExecutorService s = Executors.newSingleThreadScheduledExecutor();
+        s.scheduleAtFixedRate(() -> {
+            if (Math.random() < p && !active.isEmpty()) {
+                synchronized (active) {
+                    int i = ThreadLocalRandom.current().nextInt(active.size());
+                    try { active.get(i).close(); }
+                    catch (IOException ignored) {}
                 }
             }
-        };
-
-        scheduler.scheduleAtFixedRate(task, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
+        }, interval, interval, TimeUnit.SECONDS);
     }
 
-    private static void SearchPeer(List<Socket> activeSockets,
-                                   ExecutorService executor,
-                                   Socket clientSocket,
-                                   FileStorage fileStorage) throws IOException {
+    private static void handleFallback(
+            List<Socket> active,
+            ExecutorService exec,
+            Socket client,
+            FileStorage storage) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
+             PrintWriter writer = new PrintWriter(client.getOutputStream(), true)) {
 
-        BufferedReader reader = new BufferedReader(
-                new InputStreamReader(clientSocket.getInputStream()));
-        PrintWriter writer = new PrintWriter(
-                clientSocket.getOutputStream(), true);
-
-        String line = reader.readLine();
-
-        if (!TryFindTrustedClient(line, writer)) {
-            executor.execute(new RequestHandler(
-                    activeSockets,
-                    clientSocket,
-                    reader,
-                    writer,
-                    line,
-                    fileStorage,
-                    files,
-                    trustedClients
-            ));
+            String cmd = reader.readLine();
+            if (!tryFindTrusted(cmd, writer)) {
+                exec.execute(new RequestHandler(active, client, reader, writer, cmd, storage, files, trustedClients));
+            }
+        } catch (IOException e) {
+            logger.warning("Fallback error: " + e.getMessage());
         }
     }
 
-    private static boolean TryFindTrustedClient(String line, PrintWriter writer) {
-        if (line == null || !line.trim().startsWith("DOWNLOAD")) {
-            return false;
-        }
+    private static boolean tryFindTrusted(String cmd, PrintWriter writer) {
+        if (cmd == null || !cmd.startsWith("DOWNLOAD")) return false;
+        String[] p = cmd.split("\\s+");
+        if (p.length < 3) return false;
+        String fileId = p[1];
+        int idx;
+        try { idx = Integer.parseInt(p[2]); }
+        catch(NumberFormatException e) { return false; }
 
-        String[] parts = line.trim().split("\\s+");
-        if (parts.length < 3) {
-            return false;
-        }
-
-        String fileId = parts[1];
-        int blockIndex = Integer.parseInt(parts[2]);
-
-        List<TrustedClient> candidates = trustedClients.getOrDefault(fileId, List.of());
-        boolean peerFound = false;
-
-        for (TrustedClient peer : candidates) {
-            try (Socket peerSocket = new Socket(peer.host(), peer.port());
-                 PrintWriter peerWriter = new PrintWriter(peerSocket.getOutputStream(), true);
-                 BufferedReader peerReader = new BufferedReader(new InputStreamReader(peerSocket.getInputStream()))) {
-
-                peerWriter.println("TOKEN_REQUEST " + fileId + " " + blockIndex);
-                String tokenLine = peerReader.readLine();
-
-                if (tokenLine != null && tokenLine.startsWith("TOKEN ")) {
-                    writer.println(tokenLine);
-                    peerFound = true;
-                    break;
+        for (TrustedClient peer : trustedClients.getOrDefault(fileId, Collections.emptyList())) {
+            try (Socket sock = new Socket(peer.host(), peer.port());
+                 PrintWriter pw = new PrintWriter(sock.getOutputStream(), true);
+                 BufferedReader br = new BufferedReader(new InputStreamReader(sock.getInputStream()))) {
+                pw.println("TOKEN_REQUEST " + fileId + " " + idx);
+                String resp = br.readLine();
+                if (resp != null && resp.startsWith("TOKEN ")) {
+                    writer.println(resp);
+                    return true;
                 }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+            } catch (IOException ignored) {
+                // peer unreachable
             }
         }
+        return false;
+    }
 
-        return  peerFound;
+    // --- MetricsLogger inner class ---
+    private static class MetricsLogger {
+        private final PrintWriter out;
+        public MetricsLogger(String path) throws IOException {
+            out = new PrintWriter(new FileWriter(path, false));
+            out.println("timestamp,active,P,T,Cs");
+        }
+        public synchronized void logSnapshot(int active, double P, int T, int Cs) {
+            long ts = System.currentTimeMillis();
+            out.printf(java.util.Locale.US, "%d,%d,%.3f,%d,%d%n", ts, active, P, T, Cs);
+            out.flush();
+        }
     }
 }

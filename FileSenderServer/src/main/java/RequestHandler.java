@@ -23,7 +23,11 @@ public class RequestHandler implements Runnable {
         this(activeSockets, socket, null, null, null, fileStorage, files, trustedClients);
     }
 
-    public RequestHandler(List<Socket> activeSockets, Socket socket, BufferedReader reader, PrintWriter writer, String command, FileStorage fileStorage, List<ServerFile> files, Map<String, List<TrustedClient>> trustedClients) {
+    public RequestHandler(List<Socket> activeSockets, Socket socket,
+                          BufferedReader reader, PrintWriter writer,
+                          String command, FileStorage fileStorage,
+                          List<ServerFile> files,
+                          Map<String, List<TrustedClient>> trustedClients) {
         this.socket = socket;
         this.activeSockets = activeSockets;
         this.fileStorage = fileStorage;
@@ -38,11 +42,11 @@ public class RequestHandler implements Runnable {
     public void run() {
         try (OutputStream out = socket.getOutputStream();
              DataOutputStream dataOut = new DataOutputStream(out)) {
-
+    
             if (command == null) {
-                try (InputStream in = socket.getInputStream();
+                try (InputStream  in      = socket.getInputStream();
                      BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(in));
-                     PrintWriter bufferedWriter = new PrintWriter(out, true)) {
+                     PrintWriter    bufferedWriter = new PrintWriter(out, true)) {
                     handleCommands(bufferedReader, bufferedWriter, dataOut);
                 }
             } else {
@@ -50,7 +54,6 @@ public class RequestHandler implements Runnable {
                 handleCommands(reader, writer, dataOut);
             }
         } catch (IOException e) {
-            // I/O error
         } finally {
             synchronized (activeSockets) { activeSockets.remove(socket); }
             try { if (!socket.isClosed()) socket.close(); } catch (IOException ignored) {}
@@ -70,24 +73,18 @@ public class RequestHandler implements Runnable {
 
         switch (cmd) {
             case "LIST_FILES" -> {
-                for (ServerFile f : files) {
-                    writer.println("Name: " + f.fileName() + ", ID: " + f.sha256());
-                }
+                for (ServerFile f : files) writer.println("Name: " + f.fileName() + ", ID: " + f.sha256());
                 writer.println("END_OF_LIST");
             }
             case "DOWNLOAD" -> {
-                if (parts.length < 3) {
-                    writer.println("ERROR: Missing file ID or block number for DOWNLOAD");
-                    break;
-                }
                 String fileId = parts[1];
-                int blockInd = Integer.parseInt(parts[2]);
+                int blockIndex = Integer.parseInt(parts[2]);  // on l’appelle blockIndex
                 Optional<ServerFile> fileD = files.stream()
                         .filter(f -> f.sha256().equals(fileId))
                         .findAny();
                 if (fileD.isPresent()) {
                     writer.println("SENDING");
-                    byte[] blockData = fileStorage.getBlock(fileD.get().fileName(), blockInd);
+                    byte[] blockData = fileStorage.getBlock(fileD.get().fileName(), blockIndex);
                     dataOut.writeInt(blockData.length);
                     dataOut.write(blockData);
                     dataOut.flush();
@@ -125,3 +122,4 @@ public class RequestHandler implements Runnable {
         }
     }
 }
+

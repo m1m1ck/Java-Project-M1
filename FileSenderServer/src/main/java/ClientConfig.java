@@ -9,7 +9,7 @@ public class ClientConfig extends BaseConfig {
     private String serverHost = "localhost";
     private int serverPort = 12345;
     private String fileId = "random";
-    private int dC = 1;
+    private int dC = 10;
     public String getServerHost() {
         return serverHost;
     }
@@ -29,6 +29,8 @@ public class ClientConfig extends BaseConfig {
     /**
      * Parse command-line arguments in the format --key=value
      */
+
+     
     public static ClientConfig fromArgs(String[] args) {
         ClientConfig config = new ClientConfig();
         Map<String, String> argMap = parseArgs(args);
@@ -52,8 +54,7 @@ public class ClientConfig extends BaseConfig {
             config.b = Integer.parseInt(argMap.get("B"));
         }
 
-        config.filesDirectory = Paths.get("src", "main", "resources", "Client_Port" + config.getPort()).toString();
-
+        config.filesDirectory = "../resources/ClientPort" + config.port;
         return config;
     }
 
