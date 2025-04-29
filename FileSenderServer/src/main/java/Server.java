@@ -119,29 +119,26 @@ public class Server {
         }
 
         String fileId = parts[1];
-        int blockIndex = Integer.parseInt(parts[2]);
 
         List<TrustedClient> candidates = trustedClients.getOrDefault(fileId, List.of());
-        boolean peerFound = false;
 
         for (TrustedClient peer : candidates) {
             try (Socket peerSocket = new Socket(peer.host(), peer.port());
                  PrintWriter peerWriter = new PrintWriter(peerSocket.getOutputStream(), true);
                  BufferedReader peerReader = new BufferedReader(new InputStreamReader(peerSocket.getInputStream()))) {
 
-                peerWriter.println("TOKEN_REQUEST " + fileId + " " + blockIndex);
+                peerWriter.println("TOKEN_REQUEST " + fileId);
                 String tokenLine = peerReader.readLine();
 
                 if (tokenLine != null && tokenLine.startsWith("TOKEN ")) {
                     writer.println(tokenLine);
-                    peerFound = true;
-                    break;
+                    return true;
                 }
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         }
 
-        return  peerFound;
+        return  false;
     }
 }

@@ -28,7 +28,7 @@ public class Test {
                     serverArgs.add("--B=" + value);
                     clientCommonArgs.add("--B=" + value);
                 }
-                case "DC", "file" -> clientCommonArgs.add("--" + key + "=" + value);
+                case "DC", "file", "Pc" -> clientCommonArgs.add("--" + key + "=" + value);
                 case "clients" -> {
                 }
                 default -> throw new IllegalArgumentException("Unknown argument: " + key);

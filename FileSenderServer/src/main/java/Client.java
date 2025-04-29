@@ -8,6 +8,13 @@ import java.util.logging.Logger;
 
 public class Client {
     private static final Logger logger = Logger.getLogger(Client.class.getName());
+    private static final Map<String, TokenInfo> validTokens = new ConcurrentHashMap<>();
+
+    private record TokenInfo(String fileId, long expirationTimeMillis) {
+    }
+
+    private static final ScheduledExecutorService cleanerService = Executors.newSingleThreadScheduledExecutor();
+    private static final Random rand = new Random();
 
     public static void main(String[] args) {
         ClientConfig config = ClientConfig.fromArgs(args);
@@ -67,6 +74,7 @@ public class Client {
                         downloadBlocksForThread(config, fileId, threadIndex, blocksMap);
                     } finally {
                         latch.countDown();
+                        System.out.println("latch" + threadIndex);
                     }
                 });
             }
@@ -106,6 +114,7 @@ public class Client {
                 dataOut.flush();
 
                 String response = readLine(dataIn);
+
                 if (response == null || response.isEmpty()) break;
                 if ("EOF".equals(response)) break;
 
@@ -119,7 +128,7 @@ public class Client {
                 } else if (response.startsWith("TOKEN")) {
                     logger.info("Client received token: " + response);
                     handleTokenDownloadWithStream(config, response, fileId, blockIndex, blocksMap);
-                    blockIndex += config.getDC();
+                    break;
                 } else {
                     break;
                 }
@@ -131,28 +140,34 @@ public class Client {
 
     private static void handleTokenDownloadWithStream(ClientConfig config, String tokenResponse, String fileId, int blockIndex, ConcurrentMap<Integer, byte[]> blocksMap) {
         String[] parts = tokenResponse.split("\\s+");
-        if (parts.length < 5) return;
+        if (parts.length < 4) return;
         String token = parts[1], host = parts[2];
         int port = Integer.parseInt(parts[3]);
-        try (Socket peerSocket = new Socket(host, port);
-             DataInputStream  pin  = new DataInputStream(peerSocket.getInputStream());
-             DataOutputStream pout = new DataOutputStream(peerSocket.getOutputStream())) {
+        while (true) {
+            try (Socket peer = new Socket(host, port);
+                 DataOutputStream pout = new DataOutputStream(peer.getOutputStream());
+                 DataInputStream  pin  = new DataInputStream(peer.getInputStream())) {
 
-            //logger.info();
-            pout.writeBytes("DOWNLOAD_TOKEN " + token + " " + fileId + " " + blockIndex + "\n");
-            pout.flush();
+                // send the DOWNLOAD_TOKEN command over the same DataOutputStream
+                pout.writeBytes("DOWNLOAD_TOKEN " + token + " " + fileId + " " + blockIndex + "\n");
+                pout.flush();
 
-            String resp = readLine(pin);
-            if (resp != null && resp.startsWith("SENDING")) {
-                int len = pin.readInt();
-                if (len > 0) {
+                // read the reply line via your utility
+                String resp = readLine(pin);
+                if (resp.startsWith("SENDING")) {
+                    int len = pin.readInt();
+                    if (len <= 0) break;
                     byte[] buf = new byte[len];
                     pin.readFully(buf);
                     blocksMap.put(blockIndex, buf);
+                } else {
+                    break;
                 }
+                blockIndex += config.getDC();
+            } catch (IOException e) {
+                logger.warning("[Token] Failed to download via token: " + e.getMessage());
+                break;
             }
-        } catch (IOException e) {
-            logger.warning("[Token] Failed to download via token: " + e.getMessage());
         }
     }
 
@@ -186,52 +201,89 @@ public class Client {
     }
 
     // startTrustedClientServerSingleThread unchanged
+
     public static void startTrustedClientServerSingleThread(ClientConfig config, FileStorage fileStorage) {
+        // Периодически чистить протухшие токены
+        cleanerService.scheduleAtFixedRate(Client::cleanExpiredTokens, 5, 5, TimeUnit.SECONDS);
+
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
             logger.info("[TrustedServer] Started on port " + config.getPort());
             while (true) {
-                handleTrustedClient(serverSocket.accept(), fileStorage);
+                Socket socket = serverSocket.accept();
+                handleTrustedClient(socket, fileStorage, config);
             }
         } catch (IOException e) {
             logger.severe("[TrustedServer] Critical error: " + e.getMessage());
+        } finally {
+            cleanerService.shutdown();
         }
     }
 
-    // handleTrustedClient unchanged
-    private static void handleTrustedClient(Socket socket, FileStorage fileStorage) {
+    private static void handleTrustedClient(Socket socket, FileStorage fileStorage, ClientConfig config) {
         try (Socket s = socket;
-             BufferedReader reader = new BufferedReader(new InputStreamReader(s.getInputStream()));
-             PrintWriter writer = new PrintWriter(s.getOutputStream(), true);
-             DataOutputStream dataOut = new DataOutputStream(s.getOutputStream())) {
-            String line = reader.readLine();
+             DataInputStream reader = new DataInputStream(s.getInputStream());
+             DataOutputStream writer = new DataOutputStream(s.getOutputStream())) {
+
+            String line = readLine(reader); // используй readLine(DataInputStream)
             if (line == null) return;
             String[] parts = line.trim().split("\\s+");
-            if (parts.length < 3 || !"TOKEN_REQUEST".equals(parts[0])) {
-                writer.println("ERROR: Invalid TOKEN_REQUEST");
+
+            if ("TOKEN_REQUEST".equals(parts[0])) {
+                if (parts.length < 2) {
+                    writer.writeBytes("ERROR: Invalid TOKEN_REQUEST format\n");
+                    return;
+                }
+                if (rand.nextFloat() < config.getPC()) {
+                    writer.writeBytes("CLIENT DENIED THE TOKEN REQUEST\n");
+                    return;
+                }
+                String fileId = parts[1];
+                String token = UUID.randomUUID().toString();
+                long expirationTime = System.currentTimeMillis() + 240_000;
+                validTokens.put(token, new TokenInfo(fileId, expirationTime));
+
+                String host = s.getLocalAddress().getHostAddress();
+                int port = s.getLocalPort();
+                writer.writeBytes("TOKEN " + token + " " + host + " " + port + "\n");
+                writer.flush();
                 return;
             }
-            String fileId = parts[1], blockIndex = parts[2];
-            String token = UUID.randomUUID().toString();
-            String host = s.getLocalAddress().getHostAddress();
-            int port = s.getLocalPort();
-            writer.println("TOKEN " + token + " " + host + " " + port);
-            line = reader.readLine(); if (line == null) return;
-            parts = line.trim().split("\\s+");
-            if (parts.length < 4 || !"DOWNLOAD_TOKEN".equals(parts[0])) {
-                writer.println("ERROR: Invalid DOWNLOAD_TOKEN");
+
+            if ("DOWNLOAD_TOKEN".equals(parts[0])) {
+                if (parts.length < 4) {
+                    writer.writeBytes("ERROR: Invalid DOWNLOAD_TOKEN format\n");
+                    return;
+                }
+                String token = parts[1];
+                String fileId = parts[2];
+                int blockIndex = Integer.parseInt(parts[3]);
+
+                TokenInfo info = validTokens.get(token);
+                if (info == null || !info.fileId.equals(fileId)) {
+                    writer.writeBytes("INVALID_TOKEN\n");
+                    return;
+                }
+
+                byte[] block = fileStorage.getBlock("output_" + fileId + ".txt", blockIndex);
+                writer.writeBytes("SENDING\n");  // пишем строку вручную
+                writer.flush();
+                writer.writeInt(block.length); // пишем длину
+                writer.write(block);           // пишем данные
+                writer.flush();
                 return;
             }
-            if (!token.equals(parts[1]) || !fileId.equals(parts[2]) || !blockIndex.equals(parts[3])) {
-                writer.println("INVALID_TOKEN");
-                return;
-            }
-            byte[] block = fileStorage.getBlock(fileId, Integer.parseInt(blockIndex));
-            writer.println("SENDING");
-            dataOut.writeInt(block.length);
-            dataOut.write(block);
-            dataOut.flush();
+
+            writer.writeBytes("ERROR: Unknown command\n");
+            writer.flush();
         } catch (IOException e) {
-            logger.warning("[TrustedClient] Error: " + e.getMessage());
+            logger.warning("[TrustedServer] Error handling trusted client: " + e.getMessage());
         }
+    }
+
+
+
+    private static void cleanExpiredTokens() {
+        long now = System.currentTimeMillis();
+        validTokens.entrySet().removeIf(entry -> entry.getValue().expirationTimeMillis < now);
     }
 }

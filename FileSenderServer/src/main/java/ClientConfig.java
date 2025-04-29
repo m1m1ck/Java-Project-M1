@@ -10,6 +10,7 @@ public class ClientConfig extends BaseConfig {
     private int serverPort = 12345;
     private String fileId = "random";
     private int dC = 1;
+    private float pC = 0.2F;
     public String getServerHost() {
         return serverHost;
     }
@@ -24,6 +25,9 @@ public class ClientConfig extends BaseConfig {
 
     public int getDC() {
         return dC;
+    }
+    public float getPC() {
+        return pC;
     }
 
     /**
@@ -51,6 +55,9 @@ public class ClientConfig extends BaseConfig {
         if (argMap.containsKey("B")) {
             config.b = Integer.parseInt(argMap.get("B"));
         }
+        if (argMap.containsKey("Pc")) {
+            config.pC = Float.parseFloat(argMap.get("Pc"));
+        }
 
         config.filesDirectory = Paths.get("src", "main", "resources", "Client_Port" + config.getPort()).toString();
 
@@ -67,6 +74,7 @@ public class ClientConfig extends BaseConfig {
                 ", dC=" + dC +
                 ", directory=" + filesDirectory + '\'' +
                 ", B=" + b +
+                ", Pc=" + pC +
                 '}';
     }
 }
