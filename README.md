@@ -50,7 +50,6 @@ FileSenderServer/
 ├── docs/                                 # Javadoc-generated documentation
 └── out/                                  # Compiler output
 ```
-
 When clients download files, they save them in a folder based on their port number. For example:
 
 - Clients started via `Test.java` will store files in:  
@@ -58,9 +57,54 @@ When clients download files, they save them in a folder based on their port numb
 - Clients started manually (via `Client` class) will store files in:  
   `src/main/resources/Client<port>/`  
 
-Make sure these folders can be created before running clients.
+> Make sure these folders can be created before running clients.
 
 ---
+
+## Logging
+
+The system uses Java's built-in `Logger` to output runtime information to the console.  
+It provides visibility into key events, such as:
+
+- When trusted clients are registered or used.
+- When files are served or downloaded.
+- When connections are opened or closed.
+- Errors or unexpected behavior.
+
+---
+### Statistics Logging
+
+The system tracks and logs key metrics during execution:
+
+- **For each Client**:
+  - Total time spent downloading the file.
+  - Number of times the client was helped by another (received token).
+  - Number of times the client helped others (acted as a trusted client).
+
+These statistics are automatically and **continuously saved** to a CSV file named:
+
+- `client<port>.csv` – depending on the port of the client. 
+
+The files are saved in:
+
+- `src/main/stats/` – when run manually.
+- `src/test/stats/` – when run using `Test.java`.
+
+Each time a tracked value changes, the corresponding CSV file is updated.
+
+- **For the Server**:
+  - The number of times it closed connections.
+  
+This is logged in:
+
+- `outputserver.csv`  
+  Located in the same `stats` directory (`main` or `test`) based on how the server is launched.
+
+Additionally, a summary PDF file named **`Metrics.pdf`** is created using the collected statistics.  
+It includes visual **plots and diagrams**.  
+This file is located at the **root of the project ZIP archive**.
+
+> Make sure the `/stats` directory exists under both `src/main/resources/` and `src/test/resources/`, or is writable. Otherwise, logging may fail silently.
 
 ## How to Compile & Run
 
@@ -112,8 +156,9 @@ Before running the system, keep in mind:
  - ```--B```: Block size in bytes (Default: 100)
 
 #### Example
+launch this command in the folder with java file
 ```
-java test.java --clients=4 --serverPort=23456 --filesDir=src/main/resources/ServerResources --P=0.4 --T=3 --Cs=4 --B=10 --serverHost=localhost --file=5e90375d21169526b7c0543df51fa58b24aedc667976e7b128406a161a8139a9 --Dc=8 --Pc=0.5 --clientsDelay=2000
+java Test.java --clients=4 --serverPort=23456 --P=0.4 --T=3 --Cs=4 --B=10 --serverHost=localhost --file=5e90375d21169526b7c0543df51fa58b24aedc667976e7b128406a161a8139a9 --Dc=8 --Pc=0.5 --clientsDelay=2000
 ```
 
 ### Option 2: Manual Execution
@@ -131,11 +176,12 @@ java test.java --clients=4 --serverPort=23456 --filesDir=src/main/resources/Serv
 
  - ```--B```: Block size in bytes (Default: 100)
 
- - ```filesDir```: The directory path where files should be stored or retrieved from (Default: resources/ServerResources)
+ - ```filesDir```: The directory path where files should be stored or retrieved from (Default: `resources/ServerResources/`)
 
 #### Example
+launch this command in the folder with java file
 ```
-java Server --port=9000 --P=0.4 --T=3 --Cs=4 --B=10
+java Server.java --port=23456 --P=0.4 --T=3 --Cs=4 --B=10
 ```
 
 #### Run Client
@@ -155,9 +201,10 @@ java Server --port=9000 --P=0.4 --T=3 --Cs=4 --B=10
 
  - ```--B```: Block size in bytes (Default: 100)
 
- - ```filesDir```: The directory path where files should be stored or retrieved from (Default: resources/ServerResources)
+ - ```filesDir```: The directory path where files should be stored or retrieved from (Default: `resources/Client<Port>/`)
 
 #### Example
+launch this command in the folder with java file
 ```
-java Client --port=9010 --serverHost=localhost --serverPort=9000 file=5e90375d21169526b7c0543df51fa58b24aedc667976e7b128406a161a8139a9 --Dc=6 --Pc=0.5 --B=10
+java Client.java --port=5000 --serverHost=localhost --serverPort=23456 --file=5e90375d21169526b7c0543df51fa58b24aedc667976e7b128406a161a8139a9 --Dc=6 --Pc=0.5 --B=10
 ```

@@ -321,7 +321,7 @@ public class Client {
         cleanerService.scheduleAtFixedRate(Client::cleanExpiredTokens, 5, 5, TimeUnit.SECONDS);
 
         try (ServerSocket serverSocket = new ServerSocket(config.getPort())) {
-            logger.info("[TrustedServer] Started on port " + config.getPort());
+            logger.info("[TrustedClient] Started on port " + config.getPort());
             while (true) {
                 Socket socket = serverSocket.accept();
                 handleRequest(socket);
@@ -397,7 +397,7 @@ public class Client {
             writer.writeBytes("ERROR: Unknown command\n");
             writer.flush();
         } catch (IOException e) {
-            logger.warning("[TrustedServer] Error handling trusted client: " + e.getMessage());
+            logger.warning("[TrustedClient] Error handling trusted client: " + e.getMessage());
         }
     }
 
